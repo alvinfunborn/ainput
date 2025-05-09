@@ -1,0 +1,11 @@
+[system]
+start_in_tray = true
+show_tray_icon = true
+start_at_login = false
+logging_level = "debug"
+debug_mode = false
+
+[ui_automation]
+collect_interval = 100
+cache_ttl = 60000
+edit_control_type = [50004,]
