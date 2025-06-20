@@ -12,7 +12,7 @@ use std::sync::RwLock;
 use std::thread;
 use tauri::async_runtime::JoinHandle;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering, AtomicU64};
 
 static INPUT_STATE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 static FORMER_FOCUSED_INPUT: Lazy<RwLock<Option<element::FocusedInput>>> = Lazy::new(|| RwLock::new(None));
@@ -20,6 +20,7 @@ static SELECTED_CANDIDATE: Lazy<RwLock<String>> = Lazy::new(|| RwLock::new(Strin
 static CANDIDATE: Lazy<RwLock<String>> = Lazy::new(|| RwLock::new(String::new()));
 static OVERLAY_TASK_HANDLE: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
 static OVERLAY_CANCEL_TOKEN: Lazy<Mutex<Option<Arc<AtomicBool>>>> = Lazy::new(|| Mutex::new(None));
+static TASK_GENERATION: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 
 pub fn set_input_state(state: bool) {
     info!("[set_input_state] set to {}", state);
@@ -32,14 +33,17 @@ pub fn get_input_state() -> bool {
     *input_state
 }
 
-fn start_overlay(focused_input: &element::FocusedInput) {
+fn start_overlay(focused_input: element::FocusedInput) {
     info!("[start_overlay] for app: {}, input: {}", focused_input.window_element.app, focused_input.input_element.text);
     set_input_state(true);
+    end_overlay_stream_task();
+
+    let my_generation = TASK_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+
     overlay::overlay::hide_overlay();
     resize_overlay_window(200.0, 40.0);
     *CANDIDATE.write().unwrap() = String::new();
     *SELECTED_CANDIDATE.write().unwrap() = String::new();
-    end_overlay_stream_task();
     let cancel_token = Arc::new(AtomicBool::new(false));
     {
         let mut token_guard = OVERLAY_CANCEL_TOKEN.lock().unwrap();
@@ -57,18 +61,44 @@ fn start_overlay(focused_input: &element::FocusedInput) {
             overlay::overlay::top_window(&window);
         }
     }
-    let client = ai_client::AiClient::new();
-    let context = context::Context::new(focused_input).unwrap();
-    let cancel_token_clone = cancel_token.clone();
-    let api_key = config::get_config().unwrap().ai_client.api_key;
+    
     let handle = tauri::async_runtime::spawn(async move {
+        let current_generation = TASK_GENERATION.load(Ordering::Relaxed);
+        if my_generation < current_generation {
+            info!("[start_overlay] Task generation {} is obsolete, current is {}. Aborting.", my_generation, current_generation);
+            return;
+        }
+
+        let context = match tokio::task::spawn_blocking(move || context::Context::new(&focused_input)).await {
+            Ok(Some(ctx)) => ctx,
+            Ok(None) => {
+                error!("[start_overlay] Context::new returned None.");
+                return;
+            }
+            Err(_) => {
+                error!("[start_overlay] Failed to create context in background task (JoinError).");
+                return;
+            }
+        };
+
+        let current_generation = TASK_GENERATION.load(Ordering::Relaxed);
+        if my_generation < current_generation {
+            info!("[start_overlay] Task generation {} became obsolete during context gathering, current is {}. Aborting.", my_generation, current_generation);
+            return;
+        }
+
+        let client = ai_client::AiClient::new();
+        let cancel_token_clone = cancel_token.clone();
+        let api_key = config::get_config().unwrap().ai_client.api_key;
         let result = match api_key.is_empty() {
             true => client.stream_request_mock(context, |c| {
+                debug!("[start_overlay] stream_request_mock: {}", c);
                 let mut candidate = CANDIDATE.write().unwrap();
                 candidate.push_str(&c);
                 overlay::overlay::update_overlay(c);
             }, cancel_token_clone).await,
             false => client.stream_request_ai(context, |c| {
+                debug!("[start_overlay] stream_request_ai: {}", c);
                 let mut candidate = CANDIDATE.write().unwrap();
                 candidate.push_str(&c);
                 overlay::overlay::update_overlay(c);
@@ -91,9 +121,11 @@ fn start_overlay(focused_input: &element::FocusedInput) {
 
 fn end_overlay_stream_task() {
     if let Some(handle) = OVERLAY_TASK_HANDLE.lock().unwrap().take() {
+        debug!("[end_overlay_stream_task] abort handle");
         handle.abort();
     }
     if let Some(token) = OVERLAY_CANCEL_TOKEN.lock().unwrap().as_ref() {
+        debug!("[end_overlay_stream_task] abort token");
         token.store(true, Ordering::SeqCst);
     }
 }
@@ -165,13 +197,6 @@ pub fn listen_input_state() {
     thread::spawn(move || {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(focus_interval));
-
-            if get_input_state() {
-                if let Some(window) = APP_HANDLE.lock().unwrap().as_ref().and_then(|h| h.get_webview_window("main")) {
-                    overlay::overlay::top_window(&window);
-                }
-            }
-            
             match element::get_current_focus_info() {
                 Some(focused_input) => {
                     let mut guard = FORMER_FOCUSED_INPUT.write().unwrap();
@@ -180,7 +205,7 @@ pub fn listen_input_state() {
                             info!("[listen_input_state] focus changed");
                             save_history(&former_focused_input);
                             *guard = Some(focused_input.clone());
-                            start_overlay(&focused_input);
+                            start_overlay(focused_input);
                         } else {
                             let new_content = &focused_input.input_element.content;
                             let old_content = &former_focused_input.input_element.content;
@@ -220,7 +245,7 @@ pub fn listen_input_state() {
                                     info!("[listen_input_state] content changed, restarting overlay");
                                     save_history(&former_focused_input);
                                     *guard = Some(focused_input.clone());
-                                    start_overlay(&focused_input);
+                                    start_overlay(focused_input);
                                 } else {
                                     *guard = Some(focused_input.clone());
                                 }
@@ -231,7 +256,7 @@ pub fn listen_input_state() {
                     } else {
                         info!("[listen_input_state] new input focused");
                         *guard = Some(focused_input.clone());
-                        start_overlay(&focused_input);
+                        start_overlay(focused_input);
                     }
                 }
                 None => {

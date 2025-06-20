@@ -61,7 +61,7 @@ pub fn resize_overlay_window(width: f64, height: f64) {
         } else {
             let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
         }
-        top_window(&window);
+        // top_window(&window);
     }
 }
 

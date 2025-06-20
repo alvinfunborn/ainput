@@ -11,7 +11,7 @@ use windows::Win32::{System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTM
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, WM_CLIPBOARDUPDATE
+    CallWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, WM_CLIPBOARDUPDATE, GetWindowLongPtrW, GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW
 };
 
 mod ai;
@@ -36,10 +36,10 @@ fn setup_tray(
 
   let exit_item = MenuItemBuilder::with_id("exit", "Exit").build(app_handle)?;
   let restart_item = MenuItemBuilder::with_id("restart", "Restart").build(app_handle)?;
-  let settings_item = MenuItemBuilder::with_id("settings", "Settings").build(app_handle)?;
+//   let settings_item = MenuItemBuilder::with_id("settings", "Settings").build(app_handle)?;
 
   let tray_menu = MenuBuilder::new(app_handle)
-      .item(&settings_item)
+    //   .item(&settings_item)
       .item(&restart_item)
       .item(&exit_item)
       .build()?;
@@ -227,6 +227,11 @@ pub fn run() {
       if let Ok(handle) = main_window.window_handle() {
         if let RawWindowHandle::Win32(handle) = handle.as_raw() {
             let hwnd = HWND(handle.hwnd.get() as *mut _);
+            // 获取原有扩展样式
+            let ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+            // 去掉 WS_EX_APPWINDOW，添加 WS_EX_TOOLWINDOW
+            let new_ex_style = (ex_style & !WS_EX_APPWINDOW.0 as isize) | WS_EX_TOOLWINDOW.0 as isize;
+            unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_ex_style); }
             if os::clipboard::windows_clipboard::register_clipboard_listener(hwnd) {
                 info!("[✓] clipboard listener registered");
                 unsafe {
@@ -243,8 +248,8 @@ pub fn run() {
         }
       }
       #[cfg(debug_assertions)]
-      overlay::overlay::top_window(&main_window);
       main_window.open_devtools();
+      overlay::overlay::top_window(&main_window);
 
       // Initialize panic handler
       setup_panic_handler(app_handle.clone());

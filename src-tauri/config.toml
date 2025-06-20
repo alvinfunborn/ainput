@@ -3,12 +3,12 @@
 show_tray_icon = true
 # 开机启动
 start_at_login = false
-# 日志级别
+# 日志级别: debug, info, warn, error, none(不输出日志)
 logging_level = "info"
 # 输入历史过期时间(天)
 history_ttl = 1000
 # 刷新候选框的频率(毫秒间隔)
-refresh_overlay_interval = 5000
+refresh_overlay_interval = 50
 # 候选框相对于输入框的偏移量x
 overlay_relative_x = 0
 # 候选框相对于输入框的偏移量y
@@ -32,7 +32,7 @@ overlay_style = """
 
 [ui_automation]
 # 检测聚焦窗口的频率(毫秒间隔)
-collect_interval = 3000
+collect_interval = 30
 # 忽略的app
 ignore_apps = ["Cursor.exe", "Code.exe", "Trae.exe"]
 # 此控件类型默认是输入框
