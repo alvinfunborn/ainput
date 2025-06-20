@@ -1,9 +1,16 @@
 pub mod system;
 pub mod ui_automation;
+pub mod keyboard;
+pub mod ai_client;
+pub mod keybinding;
+pub mod privacy;
 
 use log::{debug, error, info};
 pub use system::SystemConfig;
 pub use ui_automation::UiAutomationConfig;
+pub use ai_client::AiClientConfig;
+pub use keybinding::KeybindingConfig;
+pub use privacy::PrivacyConfig;
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -14,6 +21,10 @@ use toml;
 pub struct Config {
     pub system: SystemConfig,
     pub ui_automation: UiAutomationConfig,
+    pub keyboard: KeyboardConfig,
+    pub ai_client: AiClientConfig,
+    pub keybinding: KeybindingConfig,
+    pub privacy: PrivacyConfig,
 }
 
 pub fn get_config_path() -> Option<String> {
@@ -41,6 +52,8 @@ pub fn load_config() -> Config {
 // 全局配置实例
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
+
+use crate::config::keyboard::KeyboardConfig;
 
 pub static CONFIG: Lazy<Mutex<Option<Config>>> = Lazy::new(|| Mutex::new(None));
 
@@ -71,10 +84,6 @@ pub fn get_config_for_frontend() -> Config {
 // 为前端提供的配置保存命令
 #[tauri::command]
 pub fn save_config_for_frontend(config: Config) {
-    // 重排序 keyboard.available_key
-    let mut config = config;
-    debug!("[save_config_for_frontend] save config: {:?}", config);
-
     // 更新内存中的配置
     {
         let mut config_guard = CONFIG.lock().unwrap();

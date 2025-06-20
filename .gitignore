@@ -26,3 +26,4 @@ dist-ssr
 .specstory/.what-is-this.md
 .cursorindexingignore
 **/.specstory
+**/input.db

@@ -1,13 +1,18 @@
-use std::panic;
+use std::{panic, sync::Mutex};
 
 use config::{get_config_for_frontend, save_config_for_frontend};
 use log::{error, info, warn};
-use os::{element, monitor};
+use once_cell::sync::Lazy;
+use os::{element};
 use tauri::{image::Image, menu::{MenuBuilder, MenuItemBuilder}, tray::{TrayIconBuilder, TrayIconEvent}, AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use utils::logger::init_logger;
-use windows::Win32::{Foundation::HWND, Graphics::Dwm::{DwmSetWindowAttribute, DWMWINDOWATTRIBUTE}, System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED}, UI::WindowsAndMessaging::{GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TRANSPARENT}};
+use windows::Win32::{System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED}};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CallWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, WM_CLIPBOARDUPDATE
+};
 
 mod ai;
 mod input;
@@ -15,6 +20,10 @@ mod config;
 mod context;
 mod os;
 mod utils;
+mod overlay;
+
+static APP_HANDLE: Lazy<Mutex<Option<AppHandle>>> = Lazy::new(|| Mutex::new(None));
+static mut ORIGINAL_WNDPROC: Option<unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT> = None;
 
 fn setup_tray(
   app_handle: &AppHandle,
@@ -73,14 +82,6 @@ fn setup_tray(
   Ok(())
 }
 
-fn setup_shortcut(
-  app_handle: &AppHandle,
-  config: &config::Config,
-  main_window: tauri::WebviewWindow,
-) -> Result<(), Box<dyn std::error::Error>> {
-  Ok(())
-}
-
 fn set_auto_start(
   app_handle: &AppHandle,
   config: &config::Config,
@@ -130,7 +131,9 @@ fn setup_panic_handler(app_handle: tauri::AppHandle) {
 }
 
 fn create_app_builder() -> tauri::Builder<tauri::Wry> {
+  info!("[create_app_builder] creating app builder");
   tauri::Builder::default()
+      .plugin(tauri_plugin_notification::init())
       .plugin(tauri_plugin_autostart::init(
           MacosLauncher::LaunchAgent,
           None,
@@ -146,6 +149,8 @@ fn create_app_builder() -> tauri::Builder<tauri::Wry> {
       .invoke_handler(tauri::generate_handler![
           get_config_for_frontend,
           save_config_for_frontend,
+          overlay::overlay::resize_overlay_window,
+          overlay::overlay::get_overlay_style,
       ])
       .on_window_event(|window, event| {
           if let WindowEvent::CloseRequested { api, .. } = event {
@@ -155,99 +160,29 @@ fn create_app_builder() -> tauri::Builder<tauri::Wry> {
       })
 }
 
-fn create_overlay_window(
-  app_handle: &AppHandle,
-  window_label: &str,
-  monitor: &monitor::MonitorInfo,
-) {
-  // 如果已存在，先关闭
-  if let Some(existing_window) = app_handle.get_webview_window(&window_label) {
-      warn!("[create_overlay_window] close existing window: {}", window_label);
-      if let Err(e) = existing_window.close() {
-          error!(
-              "[create_overlay_window] close existing window failed: {}",
-              e
-          );
-      }
-  }
-
-  let width = monitor.width as f64 / monitor.scale_factor;
-  let height = monitor.height as f64 / monitor.scale_factor;
-  let position_x = monitor.x;
-  let position_y = monitor.y;
-  info!(
-      "[create_overlay_window] create overlay window {}: position({}, {}), size{}x{}",
-      window_label, position_x, position_y, width, height
-  );
-  let window = tauri::WebviewWindowBuilder::new(
-      app_handle,
-      window_label,
-      tauri::WebviewUrl::App(format!("overlay.html?window_label={}", window_label).into()),
-  )
-  .title(window_label)
-  .transparent(true)
-  .decorations(false)
-  // must disable shadow, otherwise the window will be offset
-  .shadow(false)
-  .resizable(true)
-  .inner_size(width, height)
-  .focused(false)
-  .build();
-
-  if let Err(e) = window {
-      panic!(
-          "[create_overlay_window] create overlay window failed: {}",
-          e
-      );
-  }
-  
-  let window = window.unwrap();
-  if let Err(e) = window.set_position(tauri::PhysicalPosition::new(position_x, position_y)) {
-      error!("[create_overlay_window] set position failed: {}", e);
-  }
-  // 确保窗口位置正确
-  if let Ok(hwnd) = window.hwnd() {
-    let hwnd_raw = hwnd.0;
-    const DWMWA_WINDOW_CORNER_PREFERENCE: DWMWINDOWATTRIBUTE = DWMWINDOWATTRIBUTE(33);
-    const DWMWCP_DONOTROUND: u32 = 1;
-    let preference: u32 = DWMWCP_DONOTROUND;
-    unsafe {
-      // 去掉 Windows 11 圆角
-      let _ = DwmSetWindowAttribute(
-          HWND(hwnd_raw as *mut _),
-          DWMWA_WINDOW_CORNER_PREFERENCE,
-          &preference as *const _ as _,
-          std::mem::size_of_val(&preference) as u32,
-      );
-      if !config::get_config().unwrap().system.debug_mode {
-          set_window_transparent_style(&window, hwnd_raw as i64);
-      }
+// 自定义的窗口过程
+unsafe extern "system" fn sub_wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if msg == WM_CLIPBOARDUPDATE {
+        info!("[sub_wnd_proc] clipboard update message received");
+        os::clipboard::windows_clipboard::handle_clipboard_update();
     }
-  }
-}
-
-fn set_window_transparent_style(window: &tauri::WebviewWindow, hwnd_raw: i64) {
-  // 设置无任务栏图标并确保在最顶层
-  if let Err(e) = window.set_skip_taskbar(true) {
-      error!("[set_overlay_style] set skip taskbar failed: {}", e);
-  }
-  if let Err(e) = window.set_always_on_top(true) {
-      error!("[set_overlay_style] set always on top failed: {}", e);
-  }
-
-  // 设置扩展窗口样式
-  unsafe {
-      let style = GetWindowLongW(HWND(hwnd_raw as *mut _), GWL_EXSTYLE);
-      // 确保WS_EX_TRANSPARENT样式被正确设置
-      SetWindowLongW(
-          HWND(hwnd_raw as *mut _),
-          GWL_EXSTYLE,
-          style | (WS_EX_TRANSPARENT.0 | WS_EX_LAYERED.0) as i32,
-      );
-  }
+    
+    // 调用原始的窗口过程
+    if let Some(original_wndproc) = ORIGINAL_WNDPROC {
+        CallWindowProcW(Some(original_wndproc), hwnd, msg, wparam, lparam)
+    } else {
+        // Fallback, though this should ideally not be reached
+        windows::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
 }
 
 pub fn run() {
+  info!("[run] starting ainput application");
   // 自动切换到 exe 所在目录, 为了解决windows自动启动时workding directory读取不到配置文件的问题
   if !cfg!(debug_assertions) {
       if let Ok(exe_path) = std::env::current_exe() {
@@ -288,46 +223,48 @@ pub fn run() {
 
       // Setup main window
       let main_window = app_handle.get_webview_window("main").unwrap();
-
-      // Handle window visibility
-      if config.system.start_in_tray {
-          if let Err(e) = main_window.hide() {
-              error!("[✗] hide main window failed: {}", e);
-          }
-          info!("[✓] minimized to tray (if show_tray_icon is true)");
-      } else {
-          if let Err(e) = main_window.show() {
-              error!("[✗] show main window failed: {}", e);
-          }
+      // 在这里设置剪贴板监听
+      if let Ok(handle) = main_window.window_handle() {
+        if let RawWindowHandle::Win32(handle) = handle.as_raw() {
+            let hwnd = HWND(handle.hwnd.get() as *mut _);
+            if os::clipboard::windows_clipboard::register_clipboard_listener(hwnd) {
+                info!("[✓] clipboard listener registered");
+                unsafe {
+                    let original_proc = SetWindowLongPtrW(
+                        hwnd,
+                        GWLP_WNDPROC,
+                        sub_wnd_proc as usize as _,
+                    );
+                    ORIGINAL_WNDPROC = Some(std::mem::transmute(original_proc));
+                }
+            } else {
+                error!("Failed to register clipboard listener");
+            }
+        }
       }
+      #[cfg(debug_assertions)]
+      overlay::overlay::top_window(&main_window);
+      main_window.open_devtools();
 
       // Initialize panic handler
       setup_panic_handler(app_handle.clone());
       info!("[✓] panic handler initialized");
 
-      monitor::init_monitors(&main_window);
-      info!("[✓] monitors initialized");
+      input::hook::init(app_handle.clone());
+      info!("[✓] keyboard listener initialized");
 
       // 监听输入焦点
-      element::listen_input_focus();
+      element::collect_input_focus();
       info!("[✓] input focus listener initialized");
 
       input::listen_input_state();
       info!("[✓] input state listener initialized");
 
-    //   // Create overlay windows
-    //   create_overlay_window(&app_handle, "main", &monitor::MONITORS_STORAGE.lock().unwrap()[0]);
-    //   info!("[✓] overlay windows created");
-
-      // Setup shortcuts
-      setup_shortcut(&app_handle, &config, main_window.clone())
-          .expect("Failed to setup shortcuts");
-      info!("[✓] shortcuts setup");
-
       // set autostart
       set_auto_start(&app_handle, &config).expect("Failed to setup auto start");
       info!("[✓] auto start setup");
 
+      *APP_HANDLE.lock().unwrap() = Some(app_handle.clone());
       info!("=== application initialized ===");
       Ok(())
   });
@@ -342,6 +279,8 @@ pub fn run() {
   app.run(|_app_handle, event| {
       if let tauri::RunEvent::Exit = event {
           info!("application is exiting, cleaning up resources...");
+          input::hook::cleanup();
+          info!("[✓] keyboard listener cleaned up");
 
           unsafe {
               CoUninitialize();
