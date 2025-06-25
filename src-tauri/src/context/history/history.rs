@@ -1,6 +1,4 @@
-use crate::context::history::db;
-
-use super::db::{Input};
+use crate::db::input_history::{Input, insert_history};
 use std::collections::HashSet;
 use diesel::prelude::*;
 
@@ -25,11 +23,10 @@ pub struct InputHistory {
 }
 
 pub fn save_history(conn: &mut SqliteConnection, input_history: &InputHistory) {
-    use crate::context::history::db::input::dsl::*;
-    use crate::context::history::db::Input;
     if input_history.input_content.trim().is_empty() {
         return;
     }
+    use crate::db::input_history::input::dsl::*;
     // 查询最后一条记录
     let last: Option<Input> = input
         .order(timestamp.desc())
@@ -66,7 +63,7 @@ pub fn save_history(conn: &mut SqliteConnection, input_history: &InputHistory) {
         false
     };
     if !is_same {
-        db::insert_history(conn, &new_input);
+        insert_history(conn, &new_input);
     }
 }
 
@@ -79,7 +76,7 @@ pub fn get_history(
     input_title_: &str,
     input_content_: &str,
 ) -> QueryResult<Vec<Input>> {
-    use crate::context::history::db::input::dsl::*;
+    use crate::db::input_history::input::dsl::*;
     let mut result = Vec::new();
     let mut seen = HashSet::new();
 

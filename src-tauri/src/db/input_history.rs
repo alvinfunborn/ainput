@@ -1,11 +1,8 @@
 use diesel::prelude::*;
-use diesel::sqlite::SqliteConnection;
-use log::error;
 use serde::{Deserialize, Serialize};
-use diesel::connection::SimpleConnection;
 
-// diesel schema
-// (建议用diesel_cli自动生成，但这里手写)
+// input 表结构和 schema
+
 table! {
     input (id) {
         id -> Text,
@@ -52,38 +49,10 @@ pub struct Input {
     pub timestamp: i64,
 }
 
-pub fn establish_connection() -> SqliteConnection {
-    let mut conn = SqliteConnection::establish("input.db").expect("Error connecting to input.db");
-    // 自动建表（如不存在）
-    conn.batch_execute(r#"
-        CREATE TABLE IF NOT EXISTS input (
-            id TEXT PRIMARY KEY,
-            window_id TEXT,
-            window_app TEXT,
-            window_title TEXT,
-            window_class_name TEXT,
-            window_x INTEGER,
-            window_y INTEGER,
-            window_width INTEGER,
-            window_height INTEGER,
-            input_id TEXT,
-            input_title TEXT,
-            input_control_type INTEGER,
-            input_x INTEGER,
-            input_y INTEGER,
-            input_width INTEGER,
-            input_height INTEGER,
-            input_content TEXT,
-            timestamp BIGINT
-        )
-    "#).expect("Failed to create input table");
-    conn
-}
-
 pub fn insert_history(conn: &mut SqliteConnection, record: &Input) {
     use self::input::dsl::*;
     if let Err(e) = diesel::replace_into(input).values(record).execute(conn) {
-        error!("Failed to insert history: {}", e);
+        log::error!("Failed to insert history: {}", e);
     }
 
     // 自动清理过期历史
@@ -94,6 +63,6 @@ pub fn insert_history(conn: &mut SqliteConnection, record: &Input) {
     if let Err(e) = sql_query("DELETE FROM input WHERE timestamp < ?")
         .bind::<diesel::sql_types::BigInt, _>(expire)
         .execute(conn) {
-        error!("Failed to delete expired history: {}", e);
+        log::error!("Failed to delete expired history: {}", e);
     }
-}
+} 

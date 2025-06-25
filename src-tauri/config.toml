@@ -1,20 +1,147 @@
 [system]
-# 显示托盘图标
+# 是否显示托盘图标
 show_tray_icon = true
-# 开机启动
+# 是否开机启动
 start_at_login = false
-# 日志级别: debug, info, warn, error, none(不输出日志)
+# 日志级别
 logging_level = "info"
-# 输入历史过期时间(天)
+# 历史记录过期时间
 history_ttl = 1000
-# 刷新候选框的频率(毫秒间隔)
-refresh_overlay_interval = 50
-# 候选框相对于输入框的偏移量x
-overlay_relative_x = 0
-# 候选框相对于输入框的偏移量y
-overlay_relative_y = -28
+
+[ui_automation]
+# 窗口元素收集间隔
+collect_interval = 10
+# 忽略应用
+ignore_apps = [
+    "Cursor.exe",
+    "Code.exe",
+    "Trae.exe",
+]
+# 默认编辑控件类型
+default_edit_control_types = [50004]
+# 此控件类型包含文本内容时视为编辑控件
+hastext_edit_control_types = [50026]
+
+# 特殊应用的额外编辑控件类型
+[ui_automation.app_edit_control_types]
+"WINWORD.EXE" = [
+    50029,
+    50033,
+]
+"EXCEL.EXE" = [
+    50029,
+    50033,
+]
+"msedge.exe" = [50003]
+
+[keyboard]
+# 修饰键按下时, 不监听任何键盘按键
+propagation_modifier = [
+    "LCtrl",
+    "RCtrl",
+    "LAlt",
+    "RAlt",
+    "LWin",
+    "RWin",
+    "LShift",
+    "RShift",
+]
+
+# 可用键盘按键, 包括0-9a-z,./;'[]\-=`
+[keyboard.available_key]
+Backspace = 8
+CapsLock = 20
+Delete = 46
+Down = 40
+End = 35
+Enter = 13
+Esc = 27
+F1 = 112
+F10 = 121
+F11 = 122
+F12 = 123
+F2 = 113
+F3 = 114
+F4 = 115
+F5 = 116
+F6 = 117
+F7 = 118
+F8 = 119
+F9 = 120
+Home = 36
+Insert = 45
+LAlt = 164
+LCtrl = 162
+LShift = 160
+LWin = 91
+Left = 37
+Num0 = 96
+Num1 = 97
+Num2 = 98
+Num3 = 99
+Num4 = 100
+Num5 = 101
+Num6 = 102
+Num7 = 103
+Num8 = 104
+Num9 = 105
+NumAdd = 107
+NumDecimal = 110
+NumDivide = 111
+NumMultiply = 106
+NumSubtract = 109
+PageDown = 34
+PageUp = 33
+RAlt = 165
+RCtrl = 163
+RShift = 161
+RWin = 92
+Right = 39
+Space = 32
+Tab = 9
+Up = 38
+
+[ai_client]
+# 阿里云 API Key
+api_key = ""
+# 阿里云 API URL
+url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+# 阿里云模型
+model = "qwen-plus"
+# 补充提示词
+prompt = "现在请你严格只输出下一个最有可能的补全内容本身，不要输出任何解释、标点、换行或多项，只能输出补全内容本身。"
+
+[keybinding]
+# 退出候选
+exit_overlay = ["Esc"]
+# 接受候选
+accept_candidate = ["Tab"]
+# 选择候选的第一个字符
+select_candidate_char_1 = ["1"]
+# 选择候选的第二个字符
+select_candidate_char_2 = []
+select_candidate_char_3 = []
+select_candidate_char_4 = []
+select_candidate_char_5 = []
+select_candidate_char_6 = []
+select_candidate_char_7 = []
+select_candidate_char_8 = []
+select_candidate_char_9 = []
+
+[privacy]
+# 是否启用隐私保护
+enable = true
+# 隐私保护规则, 过滤手机号, 身份证号, IP, 常见API Key
+rules = ["(1[3-9]\\d{9})|(\b\\d{17}[\\dXx]\b)|(\b(?:\\d{1,3}\\.){3}\\d{1,3}\b)|(sk-[a-zA-Z0-9]{20,})"]
+
+[overlay]
+# 候选框刷新间隔
+refresh_interval = 50
+# 候选框相对位置
+relative_x = 0
+relative_y = -28
 # 候选框样式
-overlay_style = """
+style = """
 {
   font-size: 1em;
   font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
@@ -29,119 +156,3 @@ overlay_style = """
   transition: box-shadow 0.2s, background 0.2s;
 }
 """
-
-[ui_automation]
-# 检测聚焦窗口的频率(毫秒间隔)
-collect_interval = 10
-# 忽略的app
-ignore_apps = ["Cursor.exe", "Code.exe", "Trae.exe"]
-# 此控件类型默认是输入框
-default_edit_control_types = [50004]
-# 此控件类型在内容不为空时视为输入框
-hastext_edit_control_types = [50026]
-# 指定app的额外输入框类型
-app_edit_control_types = { "EXCEL.EXE" = [50029, 50033], "WINWORD.EXE" = [50029, 50033], "msedge.exe" = [50003] }
-
-[ai_client]
-# 阿里云 api key
-api_key = ""
-# 阿里云 api url
-url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-# 阿里云 model
-model = "qwen-plus"
-# 提示词的结尾
-prompt = "现在请你严格只输出下一个最有可能的补全内容本身，不要输出任何解释、标点、换行或多项，只能输出补全内容本身。"
-
-[privacy]
-# 是否启用隐私保护
-enable = true
-# 正则表达式脱敏规则, 匹配到的内容将被替换
-# 示例: 匹配手机号,身份证号,IP地址,API密钥
-rules = [
-    "(1[3-9]\\d{9})|(\b\\d{17}[\\dXx]\b)|(\b(?:\\d{1,3}\\.){3}\\d{1,3}\b)|(sk-[a-zA-Z0-9]{20,})",
-]
-
-[keybinding]
-# 关闭候选框
-exit_overlay = ["Esc"]
-# 接受所有候选词
-accept_candidate = ["Tab"]
-# 选择候选词的第一个字符
-select_candidate_char_1 = ["1"]
-# 选择候选词的前二个字符
-select_candidate_char_2 = []
-# 选择候选词的前三个字符
-select_candidate_char_3 = []
-select_candidate_char_4 = []
-select_candidate_char_5 = []
-select_candidate_char_6 = []
-select_candidate_char_7 = []
-select_candidate_char_8 = []
-select_candidate_char_9 = []
-
-[keyboard]
-# 修饰键, 修饰键按下时不监听按键事件
-propagation_modifier = [
-    "LCtrl",
-    "RCtrl",
-    "LAlt",
-    "RAlt",
-    "LWin",
-    "RWin",
-    "LShift",
-    "RShift",
-]
-
-# 可用按键, 包括a-z1-9,=-[]\;'./`
-[keyboard.available_key]
-Backspace = 8
-Tab = 9
-Enter = 13
-CapsLock = 20
-Esc = 27
-Space = 32
-PageUp = 33
-PageDown = 34
-End = 35
-Home = 36
-Left = 37
-Up = 38
-Right = 39
-Down = 40
-Insert = 45
-Delete = 46
-LWin = 91
-RWin = 92
-Num0 = 96
-Num1 = 97
-Num2 = 98
-Num3 = 99
-Num4 = 100
-Num5 = 101
-Num6 = 102
-Num7 = 103
-Num8 = 104
-Num9 = 105
-NumMultiply = 106
-NumAdd = 107
-NumSubtract = 109
-NumDecimal = 110
-NumDivide = 111
-F1 = 112
-F2 = 113
-F3 = 114
-F4 = 115
-F5 = 116
-F6 = 117
-F7 = 118
-F8 = 119
-F9 = 120
-F10 = 121
-F11 = 122
-F12 = 123
-LShift = 160
-RShift = 161
-LCtrl = 162
-RCtrl = 163
-LAlt = 164
-RAlt = 165

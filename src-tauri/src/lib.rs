@@ -17,6 +17,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 mod ai;
 mod input;
 mod config;
+mod db;
 mod context;
 mod os;
 mod utils;
@@ -36,13 +37,13 @@ fn setup_tray(
 
   let exit_item = MenuItemBuilder::with_id("exit", "Exit").build(app_handle)?;
   let restart_item = MenuItemBuilder::with_id("restart", "Restart").build(app_handle)?;
-//   let settings_item = MenuItemBuilder::with_id("settings", "Settings").build(app_handle)?;
+  let settings_item = MenuItemBuilder::with_id("settings", "Settings").build(app_handle)?;
 
   let tray_menu = MenuBuilder::new(app_handle)
-    //   .item(&settings_item)
-      .item(&restart_item)
-      .item(&exit_item)
-      .build()?;
+    .item(&settings_item)
+    .item(&restart_item)
+    .item(&exit_item)
+    .build()?;
 
   let tray_icon = Image::from_bytes(include_bytes!("../icons/icon.ico"))?;
 
@@ -55,9 +56,17 @@ fn setup_tray(
                   app_handle.exit(0);
               }
               "settings" => {
-                  let window = app_handle.get_webview_window("main").unwrap();
-                  window.show().unwrap();
-                  window.set_focus().unwrap();
+                  let label = "settings";
+                  if let Some(window) = app_handle.get_webview_window(label) {
+                      window.show().unwrap();
+                      window.set_focus().unwrap();
+                  } else {
+                      let _ = tauri::WebviewWindowBuilder::new(app_handle, label, tauri::WebviewUrl::App("/settings".into()))
+                          .title("AInput")
+                          .resizable(true)
+                          .inner_size(300.0, 600.0)
+                          .build();
+                  }
               }
               "restart" => {
                   app_handle.restart();
@@ -70,9 +79,17 @@ fn setup_tray(
           let app_handle = tray_handle.app_handle();
           match event {
               TrayIconEvent::DoubleClick { .. } => {
-                  let window = app_handle.get_webview_window("main").unwrap();
-                  window.show().unwrap();
-                  window.set_focus().unwrap();
+                let label = "settings";
+                if let Some(window) = app_handle.get_webview_window(label) {
+                    window.show().unwrap();
+                    window.set_focus().unwrap();
+                } else {
+                    let _ = tauri::WebviewWindowBuilder::new(app_handle, label, tauri::WebviewUrl::App("/settings".into()))
+                        .title("AInput")
+                        .resizable(true)
+                        .inner_size(300.0, 600.0)
+                        .build();
+                }
               }
               _ => {}
           }
@@ -151,6 +168,7 @@ fn create_app_builder() -> tauri::Builder<tauri::Wry> {
           save_config_for_frontend,
           overlay::overlay::resize_overlay_window,
           overlay::overlay::get_overlay_style,
+          db::ai_token_usage::get_used_token_command,
       ])
       .on_window_event(|window, event| {
           if let WindowEvent::CloseRequested { api, .. } = event {

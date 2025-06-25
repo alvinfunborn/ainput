@@ -53,9 +53,9 @@ fn start_overlay(focused_input: element::FocusedInput) {
         let _ = window.set_position(LogicalPosition::new(focused_input.input_element.x as f64, focused_input.input_element.y as f64));
         if let Some(monitor) = window.current_monitor().unwrap() {
             let scale_factor = monitor.scale_factor();
-            let overlay_config = config::get_config().unwrap().system;
-            let x = (focused_input.input_element.x as f64 + overlay_config.overlay_relative_x as f64 * scale_factor) / scale_factor;
-            let y = (focused_input.input_element.y as f64 + overlay_config.overlay_relative_y as f64 * scale_factor) / scale_factor;
+            let overlay_config = config::get_config().unwrap().overlay;
+            let x = (focused_input.input_element.x as f64 + overlay_config.relative_x as f64 * scale_factor) / scale_factor;
+            let y = (focused_input.input_element.y as f64 + overlay_config.relative_y as f64 * scale_factor) / scale_factor;
             debug!("[start_overlay] x: {}, y: {}", x, y);
             let _ = window.set_position(LogicalPosition::new(x, y));
             overlay::overlay::top_window(&window);
@@ -168,7 +168,7 @@ fn select_candidate(num: i32) {
 
 fn save_history(focused_input: &element::FocusedInput) {
     info!("[save_history] for app: {}", focused_input.window_element.app);
-    let mut conn = context::history::db::establish_connection();
+    let mut conn = crate::db::conn::establish_connection();
     let input_history = context::history::history::InputHistory {
         window_id: focused_input.window_element.id,
         window_app: focused_input.window_element.app.clone(),
@@ -193,7 +193,7 @@ fn save_history(focused_input: &element::FocusedInput) {
 
 pub fn listen_input_state() {
     info!("[listen_input_state] starting input state listener thread");
-    let focus_interval = config::get_config().unwrap().system.refresh_overlay_interval;
+    let focus_interval = config::get_config().unwrap().overlay.refresh_interval;
     thread::spawn(move || {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(focus_interval));

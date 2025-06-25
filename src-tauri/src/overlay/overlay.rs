@@ -100,5 +100,5 @@ pub fn top_window(window: &tauri::WebviewWindow) {
 pub fn get_overlay_style() -> String {
     info!("[get_overlay_style] providing overlay style to frontend");
     let config = config::get_config().unwrap();
-    config.system.overlay_style
+    config.overlay.style
 }

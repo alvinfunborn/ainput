@@ -5,9 +5,10 @@ use serde::Serialize;
 
 use crate::os::clipboard::windows_clipboard::get_clipboard_history;
 use crate::os::element::ui_automation::FocusedInput;
-use crate::context::history::db::establish_connection;
+use crate::db::conn::establish_connection;
 use crate::context::history::history::get_history;
 
+#[derive(Debug, Clone, Serialize)]
 pub struct Context {
     pub app: InputContext,
     pub history: Vec<InputContext>,

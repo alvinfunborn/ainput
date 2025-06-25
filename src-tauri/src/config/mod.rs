@@ -4,6 +4,7 @@ pub mod keyboard;
 pub mod ai_client;
 pub mod keybinding;
 pub mod privacy;
+pub mod overlay;
 
 use log::{debug, error, info};
 pub use system::SystemConfig;
@@ -11,6 +12,7 @@ pub use ui_automation::UiAutomationConfig;
 pub use ai_client::AiClientConfig;
 pub use keybinding::KeybindingConfig;
 pub use privacy::PrivacyConfig;
+pub use overlay::OverlayConfig;
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -25,6 +27,7 @@ pub struct Config {
     pub ai_client: AiClientConfig,
     pub keybinding: KeybindingConfig,
     pub privacy: PrivacyConfig,
+    pub overlay: OverlayConfig,
 }
 
 pub fn get_config_path() -> Option<String> {

@@ -13,6 +13,8 @@ use futures_util::StreamExt;
 
 use crate::context::Context;
 use crate::ai::privacy;
+use crate::db::conn::establish_connection;
+use crate::db::ai_token_usage::increment_used_token;
 
 struct StreamingDeanonymizer<F>
 where
@@ -111,11 +113,22 @@ impl AiClient {
         F: FnMut(String) + Send + 'static,
     {
         info!("[AiClient::stream_request_mock] starting mock stream request");
+        
+        let prompt = self.prompt_text(context.clone());
+        let apikey = self.api_key.clone();
+        let mut conn = establish_connection();
+        let prompt_token_count = prompt.chars().count() as i64;
+        increment_used_token(&mut conn, &apikey, prompt_token_count);
 
-        let mock_response = context.history.first()
-            .map(|h| h.input_content.clone())
-            .or_else(|| context.clipboard_history.first().cloned())
-            .unwrap_or_default();
+        let history_first = context.history.first();
+        let clipboard_first = context.clipboard_history.first();
+        let mock_response = if let Some(h) = history_first {
+            h.input_content.clone()
+        } else if let Some(c) = clipboard_first {
+            c.clone()
+        } else {
+            String::new()
+        };
         
         info!("[AiClient::stream_request_mock] mock response: {}", mock_response);
 
@@ -123,6 +136,7 @@ impl AiClient {
         std::thread::spawn(move || {
             for c in chars {
                 if cancel_token.load(Ordering::SeqCst) { break; }
+                increment_used_token(&mut conn, &apikey, c.chars().count() as i64);
                 on_token(c.clone());
                 thread::sleep(Duration::from_millis(50));
             }
@@ -139,19 +153,16 @@ impl AiClient {
         let app_name = context.app.window_app;
         let window_title = context.app.window_title;
         let input_title = context.app.input_title;
-        let input_content = context.app.input_content;
         let prompt = crate::config::get_config().unwrap().ai_client.prompt;
         format!(
-            "You are now typing in the input box of the {app_name} application window (title: \"{window_title}\").\n\
-            Input box title: \"{input_title}\"\n\
-            Input box content: \"{input_content}\"\n\
+            "You are now typing in the input box of the {app_name} application window (title: \"{window_title}\", input: \"{input_title}\").\n\
             The following JSON contains context information including app, input history, and clipboard content.\n\
             {json}\n\
             {prompt}"
         )
     }
 
-    pub async fn stream_request_ai<F>(&self, context: Context, on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), reqwest::Error>
+    pub async fn stream_request_ai<F>(&self, context: Context, mut on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), reqwest::Error>
     where
         F: FnMut(String) + Send + 'static,
     {
@@ -164,15 +175,27 @@ impl AiClient {
         let mapping = anonymized_data.mapping;
         debug!("[AiClient::stream_request_ai] mapping: {:?}", mapping);
 
-        enum Processor<F: FnMut(String) + Send + 'static> {
-            Passthrough(F),
-            Deanonymizing(StreamingDeanonymizer<F>),
+        enum Processor {
+            Passthrough(Box<dyn FnMut(String) + Send>),
+            Deanonymizing(StreamingDeanonymizer<Box<dyn FnMut(String) + Send>>),
         }
 
+        let apikey = self.api_key.clone();
+        let mut conn = establish_connection();
+        let prompt_token_count = prompt.chars().count() as i64;
+        increment_used_token(&mut conn, &apikey, prompt_token_count);
         let mut processor = if mapping.is_empty() {
-            Processor::Passthrough(on_token)
+            let mut f = on_token;
+            Processor::Passthrough(Box::new(move |token: String| {
+                increment_used_token(&mut conn, &apikey, token.chars().count() as i64);
+                f(token)
+            }))
         } else {
-            Processor::Deanonymizing(StreamingDeanonymizer::new(mapping, on_token))
+            let mut f = on_token;
+            Processor::Deanonymizing(StreamingDeanonymizer::new(mapping, Box::new(move |token: String| {
+                increment_used_token(&mut conn, &apikey, token.chars().count() as i64);
+                f(token)
+            })))
         };
 
         let client = Client::builder().no_proxy().build().unwrap();
