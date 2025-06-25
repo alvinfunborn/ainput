@@ -42,7 +42,6 @@ impl PartialEq for FocusedInput {
 
 /// 获取当前聚焦输入框及其在窗口内的相对位置
 pub fn get_focused_input() -> Option<FocusedInput> {
-    debug!("[get_focused_input] called");
     unsafe {
         // 1. 获取前台窗口句柄
         let window_element = window::get_current_window()?;
@@ -84,8 +83,7 @@ pub fn get_focused_input() -> Option<FocusedInput> {
             element_type: 0,
             content,
         };
-        info!("[get_focused_input] found focused input in app: {}", window_element.app);
-        debug!("[get_focused_input] current window: {:?}, current input: {:?}, ", window_element, input_element);
+        info!("[get_focused_input] found focused input in app: {}, current window: {:?}, current input: {:?}, ", window_element.app, window_element, input_element);
         Some(FocusedInput { window_element, input_element })
     }
 }

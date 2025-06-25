@@ -32,7 +32,7 @@ overlay_style = """
 
 [ui_automation]
 # 检测聚焦窗口的频率(毫秒间隔)
-collect_interval = 30
+collect_interval = 10
 # 忽略的app
 ignore_apps = ["Cursor.exe", "Code.exe", "Trae.exe"]
 # 此控件类型默认是输入框
@@ -40,7 +40,7 @@ default_edit_control_types = [50004]
 # 此控件类型在内容不为空时视为输入框
 hastext_edit_control_types = [50026]
 # 指定app的额外输入框类型
-app_edit_control_types = { "EXCEL.EXE" = [50029, 50033], "WINWORD.EXE" = [50029, 50033] }
+app_edit_control_types = { "EXCEL.EXE" = [50029, 50033], "WINWORD.EXE" = [50029, 50033], "msedge.exe" = [50003] }
 
 [ai_client]
 # 阿里云 api key

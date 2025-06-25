@@ -14,6 +14,7 @@ function App() {
     console.info('[App] useEffect: Setting up event listeners')
     let unlistenUpdate: (() => void) | null = null
     let unlistenHide: (() => void) | null = null
+    let unlistenSelectCandidate: (() => void) | null = null
     let cancelled = false
 
     import('@tauri-apps/api/event').then(({ listen }) => {
@@ -23,7 +24,7 @@ function App() {
         const newChar = Array.isArray(event.payload) ? event.payload[0] : event.payload
         candidateRef.current += newChar || ''
         setCandidate(candidateRef.current)
-        console.debug(`[App] event: update_overlay, new candidate length: ${candidateRef.current.length}`)
+        console.debug(`[App] event: update_overlay, new char: ${newChar}, new candidate length: ${candidateRef.current.length}`)
       }).then((unlisten) => {
         if (cancelled) unlisten()
         else unlistenUpdate = unlisten
@@ -45,10 +46,14 @@ function App() {
         // candidate 去掉前 n 位
         const rest = chars.slice(n).join('');
         candidateRef.current = rest;
-        setCandidate(rest);
+        setCandidate(candidateRef.current);
+        console.info(`[App] event: select_candidate, rest: ${rest}`)
         if (rest.length === 0) {
           setOverlayVisible(false);
         }
+      }).then((unlisten) => {
+        if (cancelled) unlisten()
+        else unlistenSelectCandidate = unlisten
       })
     })
     // 去掉主窗口滚动条
@@ -58,6 +63,7 @@ function App() {
       cancelled = true
       unlistenUpdate && unlistenUpdate()
       unlistenHide && unlistenHide()
+      unlistenSelectCandidate && unlistenSelectCandidate()
       document.body.style.overflow = '';
     }
   }, [])
@@ -98,28 +104,30 @@ function App() {
   return (
     <>
       <style>{cssText}</style>
-      <div
-        id="container"
-        style={{
-          position: 'absolute',
-          left: 0,
-          top: 0,
-          width: '100vw',
-          height: '100vh',
-          borderRadius: 0,
-          boxShadow: 'none',
-          border: 'none',
-          outline: 'none',
-          display: 'flex',
-          backgroundColor: 'transparent',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          alignItems: 'center',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        <div id="candidate" ref={candidateDivRef} className="hint">{candidate}</div>
-      </div>
+      {overlayVisible && (
+        <div
+          id="container"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: '100vw',
+            height: '100vh',
+            borderRadius: 0,
+            boxShadow: 'none',
+            border: 'none',
+            outline: 'none',
+            display: 'flex',
+            backgroundColor: 'transparent',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <div id="candidate" ref={candidateDivRef} className="hint">{candidate}</div>
+        </div>
+      )}
     </>
   )
 }
