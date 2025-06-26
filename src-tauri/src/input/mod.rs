@@ -41,7 +41,6 @@ fn start_overlay(focused_input: element::FocusedInput) {
     let my_generation = TASK_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
 
     overlay::overlay::hide_overlay();
-    resize_overlay_window(200.0, 40.0);
     *CANDIDATE.write().unwrap() = String::new();
     *SELECTED_CANDIDATE.write().unwrap() = String::new();
     let cancel_token = Arc::new(AtomicBool::new(false));
@@ -94,12 +93,18 @@ fn start_overlay(focused_input: element::FocusedInput) {
             true => client.stream_request_mock(context, |c| {
                 debug!("[start_overlay] stream_request_mock: {}", c);
                 let mut candidate = CANDIDATE.write().unwrap();
+                if candidate.is_empty() && !c.trim().is_empty() {
+                    resize_overlay_window(200.0, 40.0);
+                }
                 candidate.push_str(&c);
                 overlay::overlay::update_overlay(c);
             }, cancel_token_clone).await,
             false => client.stream_request_ai(context, |c| {
                 debug!("[start_overlay] stream_request_ai: {}", c);
                 let mut candidate = CANDIDATE.write().unwrap();
+                if candidate.is_empty() && !c.trim().is_empty() {
+                    resize_overlay_window(200.0, 40.0);
+                }
                 candidate.push_str(&c);
                 overlay::overlay::update_overlay(c);
             }, cancel_token_clone).await,
