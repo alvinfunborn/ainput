@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 
-use log::{debug, info};
+use log::{debug, error, info};
 use serde_json::json;
 use reqwest::Client;
 use serde_json::Value;
@@ -146,18 +146,23 @@ impl AiClient {
 
     fn prompt_text(&self, context: Context) -> String {
         let json = json!({
-            "app": &context.app,
             "history": &context.history,
             "clipboard": &context.clipboard_history,
         });
         let app_name = context.app.window_app;
         let window_title = context.app.window_title;
+        let window_handle = context.app.window_id;
         let input_title = context.app.input_title;
+        let input_content = context.app.input_content;
+        let input_handle = context.app.input_id;
         let prompt = crate::config::get_config().unwrap().ai_client.prompt;
         format!(
-            "You are now typing in the input box of the {app_name} application window (title: \"{window_title}\", input: \"{input_title}\").\n\
-            The following JSON contains context information including app, input history, and clipboard content.\n\
+            "You are now typing in the input box of the {app_name} application window (title: \"{window_title}\", handle: \"{window_handle}\").\n\
+            The input box title is \"{input_title}\", handle: \"{input_handle}\".\n\
+            The following JSON contains extra context information including input history, and clipboard content:\n\
             {json}\n\
+            The current input box content is:\n\
+            {input_content}\n\
             {prompt}"
         )
     }
@@ -238,7 +243,7 @@ impl AiClient {
                     }
                 }
                 Err(e) => {
-                    debug!("[AiClient::stream_request_ai] error: {:?}", e);
+                    error!("[AiClient::stream_request_ai] error: {:?}", e);
                     return Err(e);
                 }
             }

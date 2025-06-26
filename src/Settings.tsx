@@ -56,14 +56,6 @@ const streamedCharsStyle: React.CSSProperties = {
   marginBottom: 0,
   userSelect: 'all',
 };
-const tipStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: '#666',
-  textAlign: 'center',
-  marginTop: 24,
-  marginBottom: 8,
-  letterSpacing: 0.5,
-};
 
 const Settings: React.FC = () => {
   const [config, setConfig] = useState<any>({ ai_client: {} });
