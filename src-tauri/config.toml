@@ -107,30 +107,28 @@ api_key = ""
 # OpenAI API URL
 url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 # 模型id
-model = "doubao-seed-1-6-flash-250615"
+model = "deepseek-v3-250324"
 prompt = """
 Now complete the current input box content based on the context and the input box content.
 Here are some examples:
-Input box content:
-不知
-Completion:
-道
-
-Input box content:
-hello wo
-Completion:
-rld
-
-Input box content:
-Attention i
-Completion:
-s all you need
-
-Input box content:
-[empty]
-Completion:
-收到
-
+<examples>
+<example>
+<input>不知</input>
+<completion>道</completion>
+</example>
+<example>
+<input>hello wo</input>
+<completion>rld</completion>
+</example>
+<example>
+<input>Attention i</input>
+<completion>s all you need</completion>
+</example>
+<example>
+<input></input>
+<completion>收到</completion>
+</example>
+</examples>
 Output only the completion, and nothing else.
 """
 

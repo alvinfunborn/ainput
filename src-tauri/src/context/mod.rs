@@ -25,6 +25,12 @@ pub struct InputContext {
     pub input_content: String,
 }
 
+fn truncate_input_content(s: &str) -> String {
+    let chars: Vec<_> = s.chars().collect();
+    let len = chars.len();
+    chars[len.saturating_sub(1024)..].iter().collect()
+}
+
 impl Context {
     pub fn new(app: &FocusedInput) -> Option<Self> {
         let app_context = InputContext {
@@ -33,7 +39,7 @@ impl Context {
             window_title: app.window_element.title.clone(),
             input_id: app.input_element.id.clone(),
             input_title: app.input_element.text.clone(),
-            input_content: app.input_element.content.clone(),
+            input_content: truncate_input_content(&app.input_element.content),
         };
         let mut conn = establish_connection();
         debug!("[Context::new] app: {:?}", app);
@@ -58,7 +64,7 @@ impl Context {
             window_title: h.window_title.clone(),
             input_id: h.input_id.clone(),
             input_title: h.input_title.clone(),
-            input_content: h.input_content.clone(),
+            input_content: truncate_input_content(&h.input_content),
         }).collect::<Vec<InputContext>>();
         debug!("[Context::new] history: {:?}", context_input_history);
         let clipboard_history = get_clipboard_history();

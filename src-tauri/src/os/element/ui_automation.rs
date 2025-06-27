@@ -83,7 +83,7 @@ pub fn get_focused_input() -> Option<FocusedInput> {
             element_type: 0,
             content,
         };
-        info!("[get_focused_input] found focused input in app: {}, current window: {:?}, current input: {:?}, ", window_element.app, window_element, input_element);
+        debug!("[get_focused_input] found focused input in app: {}, current window: {:?}, current input: {:?}, ", window_element.app, window_element, input_element);
         Some(FocusedInput { window_element, input_element })
     }
 }

@@ -23,7 +23,7 @@ static OVERLAY_CANCEL_TOKEN: Lazy<Mutex<Option<Arc<AtomicBool>>>> = Lazy::new(||
 static TASK_GENERATION: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 
 pub fn set_input_state(state: bool) {
-    info!("[set_input_state] set to {}", state);
+    debug!("[set_input_state] set to {}", state);
     let mut input_state = INPUT_STATE.lock().unwrap();
     *input_state = state;
 }
@@ -136,7 +136,6 @@ fn end_overlay_stream_task() {
 }
 
 fn end_overlay() {
-    info!("[end_overlay]");
     set_input_state(false);
     overlay::overlay::hide_overlay();
     end_overlay_stream_task();
@@ -207,7 +206,7 @@ pub fn listen_input_state() {
                     let mut guard = FORMER_FOCUSED_INPUT.write().unwrap();
                     if let Some(former_focused_input) = guard.as_ref() {
                         if !former_focused_input.eq(&focused_input) {
-                            info!("[listen_input_state] focus changed");
+                            debug!("[listen_input_state] focus changed");
                             save_history(&former_focused_input);
                             *guard = Some(focused_input.clone());
                             start_overlay(focused_input);

@@ -16,7 +16,7 @@ pub fn update_overlay(candidate: String) {
 }
 
 pub fn hide_overlay() {
-    info!("[hide_overlay] hiding overlay window");
+    debug!("[hide_overlay] hiding overlay window");
     if let Some(window) = get_main_window() {
         let _ = window.emit("hide_overlay", ());
         let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: 0.0, height: 0.0 }));

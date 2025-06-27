@@ -176,7 +176,7 @@ impl AiClient {
 
         let anonymized_data = privacy::anonymize(&prompt);
         let anonymized_prompt = anonymized_data.text;
-        debug!("[AiClient::stream_request_ai] anonymized_prompt: {:?}", anonymized_prompt);
+        info!("[AiClient::stream_request_ai] anonymized_prompt: {:?}", anonymized_prompt);
         let mapping = anonymized_data.mapping;
         debug!("[AiClient::stream_request_ai] mapping: {:?}", mapping);
 
