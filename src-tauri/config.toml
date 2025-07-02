@@ -102,12 +102,14 @@ Tab = 9
 Up = 38
 
 [ai_client]
-# OpenAI API Key
+# AI provider type: "API" or "CMD"
+provider = "CMD"
+# For "API" provider
 api_key = ""
-# OpenAI API URL
-url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
-# 模型id
-model = "deepseek-v3-250324"
+api_url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+api_model = "deepseek-v3-250324"
+# For "CMD" provider
+cmd = "gemini -p"
 prompt = """
 Now complete the current input box content based on the context and the input box content.
 Here are some examples:

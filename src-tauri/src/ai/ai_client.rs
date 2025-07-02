@@ -4,6 +4,8 @@ use std::{thread, time::Duration};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
+use std::process::{Command, Stdio};
+use std::io::{BufReader, BufRead};
 
 use log::{debug, error, info};
 use serde_json::json;
@@ -15,6 +17,7 @@ use crate::context::Context;
 use crate::ai::privacy;
 use crate::db::conn::establish_connection;
 use crate::db::ai_token_usage::increment_used_token;
+use crate::config::{self, ai_client::AiProvider};
 
 struct StreamingDeanonymizer<F>
 where
@@ -91,32 +94,45 @@ where
 
 pub struct AiClient {
     // 未来可扩展：API 地址配置、异步请求、mock/真实切换等
-    api_key: String,
-    url: String,
-    model: String,
 }
 
 impl AiClient {
     pub fn new() -> Self {
         info!("[AiClient::new] creating new AiClient");
-        let config = crate::config::get_config().unwrap().ai_client;
-        AiClient {
-            api_key: config.api_key.to_string(),
-            url: config.url.to_string(),
-            model: config.model.to_string(),
+        AiClient {}
+    }
+
+    pub async fn stream_request_ai<F>(&self, context: Context, on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        F: FnMut(String) + Send + 'static,
+    {
+        let config = config::get_config().unwrap().ai_client;
+        match config.provider {
+            AiProvider::API => {
+                if config.api_key.is_empty() {
+                    self.stream_request_mock(context, on_token, cancel_token).await?;
+                } else {
+                    self.stream_api(context, on_token, cancel_token).await?;
+                }
+            }
+            AiProvider::CMD => {
+                self.stream_cmd(context, on_token, cancel_token).await?;
+            }
         }
+        Ok(())
     }
 
     /// 模拟流式请求，每次回调一个字
-    pub async fn stream_request_mock<F>(&self, context: Context, mut on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), reqwest::Error>
+    pub async fn stream_request_mock<F>(&self, context: Context, mut on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         F: FnMut(String) + Send + 'static,
     {
         info!("[AiClient::stream_request_mock] starting mock stream request");
         
-        let prompt = self.prompt_text(context.clone());
-        let apikey = self.api_key.clone();
+        let config = config::get_config().unwrap().ai_client;
+        let apikey = config.api_key.clone();
         let mut conn = establish_connection();
+        let prompt = self.prompt_text(context.clone());
         let prompt_token_count = prompt.chars().count() as i64;
         increment_used_token(&mut conn, &apikey, prompt_token_count);
 
@@ -145,6 +161,7 @@ impl AiClient {
     }
 
     fn prompt_text(&self, context: Context) -> String {
+        let config = config::get_config().unwrap().ai_client;
         let json = json!({
             "history": &context.history,
             "clipboard": &context.clipboard_history,
@@ -155,7 +172,7 @@ impl AiClient {
         let input_title = context.app.input_title;
         let input_content = context.app.input_content;
         let input_handle = context.app.input_id;
-        let prompt = crate::config::get_config().unwrap().ai_client.prompt;
+        let prompt = config.prompt;
         format!(
             "You are now typing in the input box of the {app_name} application window (title: \"{window_title}\", handle: \"{window_handle}\").\n\
             The input box title is \"{input_title}\", handle: \"{input_handle}\".\n\
@@ -167,25 +184,76 @@ impl AiClient {
         )
     }
 
-    pub async fn stream_request_ai<F>(&self, context: Context, mut on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), reqwest::Error>
+    async fn stream_cmd<F>(&self, context: Context, mut on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         F: FnMut(String) + Send + 'static,
     {
-        info!("[AiClient::stream_request_ai] starting AI stream request");
+        info!("[AiClient::stream_cli] starting CLI stream request");
+        let config = config::get_config().unwrap().ai_client;
+        let prompt = self.prompt_text(context);
+        let command_str = config.cmd;
+
+        let mut command_parts = command_str.split_whitespace();
+        let executable = match command_parts.next() {
+            Some(e) => e,
+            None => return Err("Invalid cmd in config: missing executable".into()),
+        };
+        
+        let mut cmd = Command::new(executable);
+        cmd.args(command_parts);
+        cmd.arg(prompt);
+
+        let mut child = cmd.stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let stdout = child.stdout.take().ok_or_else(|| "Failed to open stdout".to_string())?;
+        let reader = BufReader::new(stdout);
+
+        let handle = thread::spawn(move || {
+            for line in reader.lines() {
+                if cancel_token.load(Ordering::SeqCst) {
+                    info!("[AiClient::stream_cli] stream cancelled by token");
+                    break;
+                }
+                match line {
+                    Ok(line) => {
+                        on_token(line + "\n");
+                    }
+                    Err(e) => {
+                        error!("[AiClient::stream_cli] error reading line from stdout: {:?}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        handle.join().unwrap();
+        child.wait()?;
+        info!("[AiClient::stream_cli] stream finished");
+        Ok(())
+    }
+
+    async fn stream_api<F>(&self, context: Context, mut on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        F: FnMut(String) + Send + 'static,
+    {
+        info!("[AiClient::stream_remote] starting AI stream request");
+        let config = config::get_config().unwrap().ai_client;
         let prompt = self.prompt_text(context);
 
         let anonymized_data = privacy::anonymize(&prompt);
         let anonymized_prompt = anonymized_data.text;
-        info!("[AiClient::stream_request_ai] anonymized_prompt: {:?}", anonymized_prompt);
+        info!("[AiClient::stream_remote] anonymized_prompt: {:?}", anonymized_prompt);
         let mapping = anonymized_data.mapping;
-        debug!("[AiClient::stream_request_ai] mapping: {:?}", mapping);
+        debug!("[AiClient::stream_remote] mapping: {:?}", mapping);
 
         enum Processor {
             Passthrough(Box<dyn FnMut(String) + Send>),
             Deanonymizing(StreamingDeanonymizer<Box<dyn FnMut(String) + Send>>),
         }
 
-        let apikey = self.api_key.clone();
+        let apikey = config.api_key.clone();
         let mut conn = establish_connection();
         let prompt_token_count = prompt.chars().count() as i64;
         increment_used_token(&mut conn, &apikey, prompt_token_count);
@@ -205,10 +273,10 @@ impl AiClient {
 
         let client = Client::builder().no_proxy().build().unwrap();
         let req = client
-            .post(self.url.clone())
-            .bearer_auth(self.api_key.clone())
+            .post(config.api_url)
+            .bearer_auth(config.api_key)
             .json(&serde_json::json!({
-                "model": self.model.clone(),
+                "model": config.api_model,
                 "messages": [
                     { "role": "user", "content": anonymized_prompt }
                 ],
@@ -217,12 +285,12 @@ impl AiClient {
             .send()
             .await?;
 
-        info!("[AiClient::stream_request_ai] request sent, waiting for stream response");
+        info!("[AiClient::stream_remote] request sent, waiting for stream response");
 
         let mut stream = req.bytes_stream();
         while let Some(item) = stream.next().await {
             if cancel_token.load(Ordering::SeqCst) {
-                info!("[AiClient::stream_request_ai] stream cancelled by token");
+                info!("[AiClient::stream_remote] stream cancelled by token");
                 break;
             }
             match item {
@@ -243,8 +311,8 @@ impl AiClient {
                     }
                 }
                 Err(e) => {
-                    error!("[AiClient::stream_request_ai] error: {:?}", e);
-                    return Err(e);
+                    error!("[AiClient::stream_remote] error: {:?}", e);
+                    return Err(Box::new(e));
                 }
             }
         }
@@ -253,8 +321,9 @@ impl AiClient {
             d.flush();
         }
 
-        info!("[AiClient::stream_request_ai] stream finished");
+        info!("[AiClient::stream_remote] stream finished");
         Ok(())
     }
 }
+
 

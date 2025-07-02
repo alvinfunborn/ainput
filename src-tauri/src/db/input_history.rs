@@ -55,6 +55,19 @@ pub fn insert_history(conn: &mut SqliteConnection, record: &Input) {
         log::error!("Failed to insert history: {}", e);
     }
 
+    // // Add to Tantivy index
+    // if let Some(mut search_index_guard) = get_search_index() {
+    //     if let Some(search_index) = search_index_guard.as_mut() {
+    //         let doc = doc!(
+    //             search_index.input_content_field => record.input_content.clone(),
+    //             search_index.id_field => record.id.clone(),
+    //         );
+    //         if let Err(e) = search_index.add_document(doc) {
+    //             log::error!("Failed to add document to Tantivy index: {}", e);
+    //         }
+    //     }
+    // }
+
     // 自动清理过期历史
     let ttl_days = crate::config::get_config().unwrap().system.history_ttl;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;

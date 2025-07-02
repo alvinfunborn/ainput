@@ -88,18 +88,7 @@ fn start_overlay(focused_input: element::FocusedInput) {
 
         let client = ai_client::AiClient::new();
         let cancel_token_clone = cancel_token.clone();
-        let api_key = config::get_config().unwrap().ai_client.api_key;
-        let result = match api_key.is_empty() {
-            true => client.stream_request_mock(context, |c| {
-                debug!("[start_overlay] stream_request_mock: {}", c);
-                let mut candidate = CANDIDATE.write().unwrap();
-                if candidate.is_empty() && !c.trim().is_empty() {
-                    resize_overlay_window(200.0, 40.0);
-                }
-                candidate.push_str(&c);
-                overlay::overlay::update_overlay(c);
-            }, cancel_token_clone).await,
-            false => client.stream_request_ai(context, |c| {
+        let result = client.stream_request_ai(context, |c| {
                 debug!("[start_overlay] stream_request_ai: {}", c);
                 let mut candidate = CANDIDATE.write().unwrap();
                 if candidate.is_empty() && !c.trim().is_empty() {
@@ -107,8 +96,7 @@ fn start_overlay(focused_input: element::FocusedInput) {
                 }
                 candidate.push_str(&c);
                 overlay::overlay::update_overlay(c);
-            }, cancel_token_clone).await,
-        };
+            }, cancel_token_clone).await;
 
         if let Err(e) = result {
             error!("[start_overlay] stream_request_ai failed: {}", e);

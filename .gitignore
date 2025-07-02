@@ -27,3 +27,6 @@ dist-ssr
 .cursorindexingignore
 **/.specstory
 **/input.db
+**/.cursor
+**/.vscode
+**/.trae
