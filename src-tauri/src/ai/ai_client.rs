@@ -162,33 +162,31 @@ impl AiClient {
 
     fn prompt_text(&self, context: Context) -> String {
         let config = config::get_config().unwrap().ai_client;
-        let json = json!({
-            "history": &context.history,
-            "clipboard": &context.clipboard_history,
-        });
         let app_name = context.app.window_app;
         let window_title = context.app.window_title;
         let window_handle = context.app.window_id;
         let input_title = context.app.input_title;
         let input_content = context.app.input_content;
         let input_handle = context.app.input_id;
-        let prompt = config.prompt;
-        format!(
-            "You are now typing in the input box of the {app_name} application window (title: \"{window_title}\", handle: \"{window_handle}\").\n\
-            The input box title is \"{input_title}\", handle: \"{input_handle}\".\n\
-            The following JSON contains extra context information including input history, and clipboard content:\n\
-            {json}\n\
-            The current input box content is:\n\
-            {input_content}\n\
-            {prompt}"
-        )
+        let input_history = json!(&context.history).to_string();
+        let clipboard_contents = json!(&context.clipboard_history).to_string();
+        let mut prompt = config.prompt;
+        prompt = prompt.replace("{{app_name}}", &app_name);
+        prompt = prompt.replace("{{window_title}}", &window_title);
+        prompt = prompt.replace("{{window_handle}}", &window_handle);
+        prompt = prompt.replace("{{input_title}}", &input_title);
+        prompt = prompt.replace("{{input_handle}}", &input_handle);
+        prompt = prompt.replace("{{input_content}}", &input_content);
+        prompt = prompt.replace("{{input_history}}", &input_history);
+        prompt = prompt.replace("{{clipboard_contents}}", &clipboard_contents);
+        prompt
     }
 
     async fn stream_cmd<F>(&self, context: Context, mut on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         F: FnMut(String) + Send + 'static,
     {
-        info!("[AiClient::stream_cli] starting CLI stream request");
+        info!("[AiClient::stream_cmd] starting CLI stream request");
         let config = config::get_config().unwrap().ai_client;
         let prompt = self.prompt_text(context);
         let command_str = config.cmd;
@@ -201,11 +199,17 @@ impl AiClient {
         
         let mut cmd = Command::new(executable);
         cmd.args(command_parts);
-        cmd.arg(prompt);
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
 
-        let mut child = cmd.stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        info!("[AiClient::stream_cmd] command: {:?}, prompt: {}", cmd, prompt);
+
+        let mut child = cmd.spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            stdin.write_all(prompt.as_bytes())?;
+        }
 
         let stdout = child.stdout.take().ok_or_else(|| "Failed to open stdout".to_string())?;
         let reader = BufReader::new(stdout);
@@ -213,7 +217,7 @@ impl AiClient {
         let handle = thread::spawn(move || {
             for line in reader.lines() {
                 if cancel_token.load(Ordering::SeqCst) {
-                    info!("[AiClient::stream_cli] stream cancelled by token");
+                    info!("[AiClient::stream_cmd] stream cancelled by token");
                     break;
                 }
                 match line {
@@ -221,7 +225,7 @@ impl AiClient {
                         on_token(line + "\n");
                     }
                     Err(e) => {
-                        error!("[AiClient::stream_cli] error reading line from stdout: {:?}", e);
+                        error!("[AiClient::stream_cmd] error reading line from stdout: {:?}", e);
                         break;
                     }
                 }
@@ -230,7 +234,7 @@ impl AiClient {
 
         handle.join().unwrap();
         child.wait()?;
-        info!("[AiClient::stream_cli] stream finished");
+        info!("[AiClient::stream_cmd] stream finished");
         Ok(())
     }
 
@@ -238,15 +242,15 @@ impl AiClient {
     where
         F: FnMut(String) + Send + 'static,
     {
-        info!("[AiClient::stream_remote] starting AI stream request");
+        info!("[AiClient::stream_api] starting AI stream request");
         let config = config::get_config().unwrap().ai_client;
         let prompt = self.prompt_text(context);
 
         let anonymized_data = privacy::anonymize(&prompt);
         let anonymized_prompt = anonymized_data.text;
-        info!("[AiClient::stream_remote] anonymized_prompt: {:?}", anonymized_prompt);
+        info!("[AiClient::stream_api] anonymized_prompt: {:?}", anonymized_prompt);
         let mapping = anonymized_data.mapping;
-        debug!("[AiClient::stream_remote] mapping: {:?}", mapping);
+        debug!("[AiClient::stream_api] mapping: {:?}", mapping);
 
         enum Processor {
             Passthrough(Box<dyn FnMut(String) + Send>),
@@ -285,12 +289,12 @@ impl AiClient {
             .send()
             .await?;
 
-        info!("[AiClient::stream_remote] request sent, waiting for stream response");
+        info!("[AiClient::stream_api] request sent, waiting for stream response");
 
         let mut stream = req.bytes_stream();
         while let Some(item) = stream.next().await {
             if cancel_token.load(Ordering::SeqCst) {
-                info!("[AiClient::stream_remote] stream cancelled by token");
+                info!("[AiClient::stream_api] stream cancelled by token");
                 break;
             }
             match item {
@@ -311,7 +315,7 @@ impl AiClient {
                     }
                 }
                 Err(e) => {
-                    error!("[AiClient::stream_remote] error: {:?}", e);
+                    error!("[AiClient::stream_api] error: {:?}", e);
                     return Err(Box::new(e));
                 }
             }
@@ -321,7 +325,7 @@ impl AiClient {
             d.flush();
         }
 
-        info!("[AiClient::stream_remote] stream finished");
+        info!("[AiClient::stream_api] stream finished");
         Ok(())
     }
 }

@@ -103,35 +103,49 @@ Up = 38
 
 [ai_client]
 # AI provider type: "API" or "CMD"
-provider = "CMD"
+provider = "API"
 # For "API" provider
 api_key = ""
 api_url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 api_model = "deepseek-v3-250324"
 # For "CMD" provider
-cmd = "gemini -p"
+cmd = "C:\\Users\\sinph\\scoop\\apps\\nodejs\\current\\bin\\gemini.cmd -m gemini-2.5-flash -p"
+# 完整提示词, 可用变量: app_name, window_title, window_handle, input_title, input_handle, input_content, input_history, clipboard_contents
 prompt = """
-Now complete the current input box content based on the context and the input box content.
-Here are some examples:
-<examples>
-<example>
-<input>不知</input>
-<completion>道</completion>
-</example>
-<example>
-<input>hello wo</input>
-<completion>rld</completion>
-</example>
-<example>
-<input>Attention i</input>
-<completion>s all you need</completion>
-</example>
-<example>
-<input></input>
-<completion>收到</completion>
-</example>
-</examples>
-Output only the completion, and nothing else.
+Your task is to complete the content in the input box of the {{app_name}} application window. The window has a title of "{{window_title}}" and a handle of "{{window_handle}}". The input box has a title of "{{input_title}}" and a handle of "{{input_handle}}".
+First, please carefully read the following context information which includes input history and clipboard content.
+<ContextInfo>
+<InputHistory>
+{{input_history}}
+</InputHistory>
+<ClipboardContent>
+{{clipboard_contents}}
+</ClipboardContent>
+</ContextInfo>
+Now, here is the current content in the input box:
+<InputBoxContent>
+{{input_content}}
+</InputBoxContent>
+Here are some examples of how the completion should be formatted:
+<Examples>
+<Example>
+<InputBoxContent>不知</InputBoxContent>
+<Completion>道</Completion>
+</Example>
+<Example>
+<InputBoxContent>hello wo</InputBoxContent>
+<Completion>rld</Completion>
+</Example>
+<Example>
+<InputBoxContent>Attention i</InputBoxContent>
+<Completion>s all you need</Completion>
+</Example>
+<Example>
+<InputBoxContent></InputBoxContent>
+<Completion>收到</Completion>
+</Example>
+</Examples>
+Your output should only be the completion of the input box content.
 """
 
 [keybinding]
