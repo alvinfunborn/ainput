@@ -112,14 +112,23 @@ const Settings: React.FC = () => {
           <option value="API">API</option>
           <option value="CMD">CMD</option>
         </select>
-        <label style={labelStyle} htmlFor="url">API URL</label>
-        <input id="url" name="url" value={aiClient.url || ''} onChange={handleChange} onBlur={handleBlur} style={inputStyle} placeholder="API URL" />
+        <label style={labelStyle} htmlFor="api_url">API URL</label>
+        <input id="api_url" name="api_url" value={aiClient.api_url || ''} onChange={handleChange} onBlur={handleBlur} style={inputStyle} placeholder="API URL" />
         <label style={labelStyle} htmlFor="api_key">API Key</label>
         <input id="api_key" name="api_key" value={aiClient.api_key || ''} onChange={handleChange} onBlur={handleBlur} style={inputStyle} placeholder="API Key" />
-        <label style={labelStyle} htmlFor="model">Model</label>
-        <input id="model" name="model" value={aiClient.model || ''} onChange={handleChange} onBlur={handleBlur} style={inputStyle} placeholder="Model" />
+        <label style={labelStyle} htmlFor="api_model">Model</label>
+        <input id="api_model" name="api_model" value={aiClient.api_model || ''} onChange={handleChange} onBlur={handleBlur} style={inputStyle} placeholder="Model" />
         <label style={labelStyle} htmlFor="cmd">CMD</label>
-        <input id="cmd" name="cmd" value={aiClient.cmd || ''} onChange={handleChange} onBlur={handleBlur} style={inputStyle} placeholder="CMD" />
+        <textarea
+          id="cmd"
+          name="cmd"
+          value={aiClient.cmd || ''}
+          onChange={handleChange}
+          onBlur={handleBlur}
+          style={{ ...textareaStyle, height: 60 }}
+          placeholder="CMD"
+          rows={3}
+        />
         <label style={labelStyle} htmlFor="prompt">Prompt</label>
         <textarea id="prompt" name="prompt" value={aiClient.prompt || ''} onChange={handleChange} onBlur={handleBlur} style={textareaStyle} placeholder="Prompt" />
         <div style={streamedCharsStyle}>Streamed Chars {aiClient.usedToken || ''}</div>

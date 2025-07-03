@@ -1,13 +1,14 @@
 # ainput
 
-> AI 驱动的全局输入法，智能候选，极致本地化  
+> ainput 是一款支持智能候选的 AI 驱动全局输入法。  
+>
+> ainput 支持多种大模型服务和本地 AI 工具，提供输入历史、剪贴板等上下文的智能候选，配置灵活，注重隐私。
 > ⚠️ 本项目涉及输入内容、窗口信息等数据上传至大模型服务商，详见下文"隐私声明"
 
 ---
 
 ## 需求背景
 
-典型场景：
 - 在任意输入框输入拼音或任意文本，自动弹出 AI 智能候选
 - 多屏/高DPI 环境下，候选框总能精准跟随输入框
 - 输入历史、剪贴板内容智能融合，提升输入效率
@@ -18,6 +19,10 @@
 
 - **AI 智能候选**  
 ![ainput_demo](docs/demo.gif)
+
+- **修改配置**
+![ainput_settings](docs/settings.png)
+完整配置见[config.toml](https://github.com/alvinfunborn/ainput/blob/main/src-tauri/config.toml)
 
 ---
 
@@ -41,7 +46,7 @@ ainput 的核心能力依赖于 Windows UI Automation —— 微软官方提供�
 ##### 方式一：直接下载
 
 1. 前往 [Releases 页面](https://github.com/alvinfunborn/ainput/releases) 下载最新的 `ainput.exe` 和 `config.toml` 文件。
-2. 将二者放在同一目录下，修改config.toml添加大模型服务商，双击运行 `ainput.exe`。
+2. 将二者放在同一目录下，修改config.toml添加AI服务接入方式，双击运行 `ainput.exe`。
 3. 托盘会出现 ainput 图标，可右键设置。
 4. 如需自定义配置，编辑 `config.toml`，保存后重启生效。
 
@@ -69,6 +74,21 @@ npm run tauri dev
 
 ---
 
+## AI服务接入模式
+
+ainput 支持两种大模型调用模式，用户可根据自身需求和已购服务自由选择：
+
+- **API模式**  
+  通过 HTTP API 调用大模型服务（OpenAI大模型API接口定义服务商，如 OpenAI、火山方舟、阿里云百炼 等），需在 `config.toml` 中配置 API Key。适用于拥有相关 API 权限的用户。
+
+- **CMD模式**  
+  通过本机命令行工具（如 `gemini-cli`）调用大模型。适用于已安装并配置好命令行 AI 工具，有结合本机系统能力需求的用户。  
+  > **注意：** 若使用 `gemini-cli`，请确保已在本机命令行中完成登录（如运行 `gemini`），否则无法正常生成候选。
+
+可在 `config.toml` 中通过 `ai_client.provider` 字段选择模式，并配置相应参数。
+
+---
+
 ## 默认快捷键
 
 - 候选框激活时
@@ -93,7 +113,7 @@ npm run tauri dev
 - 开源可审计，无后门
 - 仅需普通用户权限
 
-### 隐私声明
+## 隐私声明
 
 ainput 在生成 AI 候选词时，会采集并上传如下信息到大模型服务商：
 - 当前输入框的内容（你正在输入的文本）
