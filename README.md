@@ -21,7 +21,9 @@
 ![ainput_demo](docs/demo.gif)
 
 - **修改配置**
+
 ![ainput_settings](docs/settings.png)
+
 完整配置见[config.toml](https://github.com/alvinfunborn/ainput/blob/main/src-tauri/config.toml)
 
 ---
