@@ -1,6 +1,8 @@
 use crate::db::input_history::{Input, insert_history};
 use std::collections::HashSet;
 use diesel::prelude::*;
+use tantivy::schema::Value;
+use super::search;
 
 pub struct InputHistory {
     pub window_id: i64,
@@ -80,48 +82,48 @@ pub fn get_history(
     let mut result = Vec::new();
     let mut seen = HashSet::new();
 
-    // // 5. 当前content (使用 Tantivy 全文搜索)
-    // if let Some(mut search_index_guard) = get_search_index() {
-    //     if let Some(search_index) = search_index_guard.as_mut() {
-    //         if !input_content_.trim().is_empty() {
-    //             match search_index.search(input_content_, 10) {
-    //                 Ok(docs) => {
-    //                     for doc in docs {
-    //                         if let Some(id_val) = doc.get_first(search_index.id_field).and_then(|v| v.as_str()) {
-    //                             use crate::db::input_history::input::dsl::*;
-    //                             let retrieved_input: QueryResult<Input> = input.filter(id.eq(id_val)).first::<Input>(conn);
-    //                             match retrieved_input {
-    //                                 Ok(retrieved_record) => {
-    //                                     if seen.insert(retrieved_record.id.clone()) {
-    //                                         result.push(retrieved_record);
-    //                                     }
-    //                                 },
-    //                                 Err(e) => {
-    //                                     log::error!("Failed to retrieve full Input from DB for id {}: {:?}", id_val, e);
-    //                                 }
-    //                             }
-    //                         }
-    //                     }
-    //                 },
-    //                 Err(e) => {
-    //                     log::error!("Tantivy search failed: {:?}", e);
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-
-    // 5. 当前content
-    let q = input
-        .filter(input_content.like(format!("%{}%", input_content_)))
-        .order(timestamp.desc())
-        .limit(10)
-        .load::<Input>(conn)?;
-    for r in q {
-        if seen.insert(r.id.clone()) {
-            result.push(r);
+    // 5. 当前content (使用 Tantivy 全文搜索)
+    if let Some(mut search_index_guard) = search::get_search_index() {
+        if let Some(search_index) = search_index_guard.as_mut() {
+            if !input_content_.trim().is_empty() {
+                match search_index.search(input_content_, 10) {
+                    Ok(docs) => {
+                        for doc in docs {
+                            if let Some(id_val) = doc.get_first(search_index.id_field).and_then(|v| v.as_str()) {
+                                use crate::db::input_history::input::dsl::*;
+                                let retrieved_input: QueryResult<Input> = input.filter(id.eq(id_val)).first::<Input>(conn);
+                                match retrieved_input {
+                                    Ok(retrieved_record) => {
+                                        if seen.insert(retrieved_record.id.clone()) {
+                                            result.push(retrieved_record);
+                                        }
+                                    },
+                                    Err(e) => {
+                                        log::error!("Failed to retrieve full Input from DB for id {}: {:?}", id_val, e);
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        log::error!("Tantivy search failed: {:?}", e);
+                    }
+                }
+            }
         }
     }
+
+    // // 5. 当前content
+    // let q = input
+    //     .filter(input_content.like(format!("%{}%", input_content_)))
+    //     .order(timestamp.desc())
+    //     .limit(10)
+    //     .load::<Input>(conn)?;
+    // for r in q {
+    //     if seen.insert(r.id.clone()) {
+    //         result.push(r);
+    //     }
+    // }
 
     // 1. 当前window+input
     let q = input

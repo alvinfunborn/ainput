@@ -164,10 +164,10 @@ impl AiClient {
         let config = config::get_config().unwrap().ai_client;
         let app_name = context.app.window_app;
         let window_title = context.app.window_title;
-        let window_handle = context.app.window_id;
+        let window_handle = context.app.window_handle;
         let input_title = context.app.input_title;
         let input_content = context.app.input_content;
-        let input_handle = context.app.input_id;
+        let input_handle = context.app.input_handle;
         let input_history = json!(&context.history).to_string();
         let clipboard_contents = json!(&context.clipboard_history).to_string();
         let mut prompt = config.prompt;

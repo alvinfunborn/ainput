@@ -5,7 +5,7 @@ use tantivy::{doc, Index, IndexWriter, ReloadPolicy, TantivyDocument};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use log::{info, error};
-use tantivy::tokenizer::{TextAnalyzer, SimpleTokenizer, LowerCaser, Stemmer, Language};
+use tantivy::tokenizer::{TextAnalyzer, SimpleTokenizer, LowerCaser, Stemmer, Language, CJKTokenizer};
 
 // Define the schema for our search index
 pub struct SearchIndex {
@@ -34,14 +34,11 @@ impl SearchIndex {
         // Create or open the index
         let index = Index::create_in_dir(&index_path, schema.clone())?;
         
-        // Add a tokenizer for English stemming (or other languages if needed)
-        index.tokenizers().register(
-            "en_stemmed",
-            TextAnalyzer::from(SimpleTokenizer::default())
-                .filter(LowerCaser)
-                .filter(Stemmer::new(Language::English))
-        );
-
+        // CJK分词器
+        let cjk_tokenizer = TextAnalyzer::builder(CJKTokenizer)
+            .filter(LowerCaser)
+            .build();
+        index.tokenizers().register("cjk", cjk_tokenizer);
 
         let index_writer = index.writer(50_000_000)?; // 50 MB heap size for indexing
         let index_writer = Arc::new(Mutex::new(index_writer));

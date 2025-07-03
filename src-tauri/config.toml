@@ -103,7 +103,7 @@ Up = 38
 
 [ai_client]
 # AI provider type: "API" or "CMD"
-provider = "API"
+provider = "CMD"
 # For "API" provider
 api_key = ""
 api_url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"

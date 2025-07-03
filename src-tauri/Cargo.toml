@@ -51,6 +51,7 @@ futures-util = "0.3"
 regex = "1.11.0"
 raw-window-handle = "0.6.2"
 tauri-plugin-notification = "2"
+tantivy = { version = "0.24.1", features = ["cjk"] }
 
 [features]
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

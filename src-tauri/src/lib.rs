@@ -287,10 +287,10 @@ pub fn run() {
       set_auto_start(&app_handle, &config).expect("Failed to setup auto start");
       info!("[✓] auto start setup");
 
-    //   // Initialize Tantivy search index
-    //   let app_data_dir = app_handle.path().app_data_dir().expect("Failed to get app data dir");
-    //   init_search_index(app_data_dir);
-    //   info!("[✓] Tantivy search index initialized");
+      // Initialize Tantivy search index
+      let app_data_dir = app_handle.path().app_data_dir().expect("Failed to get app data dir");
+      context::history::search::init_search_index(app_data_dir);
+      info!("[✓] Tantivy search index initialized");
 
       *APP_HANDLE.lock().unwrap() = Some(app_handle.clone());
       info!("=== application initialized ===");
