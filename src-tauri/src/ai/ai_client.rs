@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 use std::io::{BufReader, BufRead};
+use std::os::windows::process::CommandExt;
 
 use log::{debug, error, info};
 use serde_json::json;
@@ -202,6 +203,9 @@ impl AiClient {
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
         info!("[AiClient::stream_cmd] command: {:?}, prompt: {}", cmd, prompt);
 

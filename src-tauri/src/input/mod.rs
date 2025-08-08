@@ -113,13 +113,14 @@ fn start_overlay(focused_input: element::FocusedInput) {
 }
 
 fn end_overlay_stream_task() {
-    if let Some(handle) = OVERLAY_TASK_HANDLE.lock().unwrap().take() {
-        debug!("[end_overlay_stream_task] abort handle");
-        handle.abort();
-    }
+    // Always lock OVERLAY_CANCEL_TOKEN before OVERLAY_TASK_HANDLE to avoid deadlocks
     if let Some(token) = OVERLAY_CANCEL_TOKEN.lock().unwrap().as_ref() {
         debug!("[end_overlay_stream_task] abort token");
         token.store(true, Ordering::SeqCst);
+    }
+    if let Some(handle) = OVERLAY_TASK_HANDLE.lock().unwrap().take() {
+        debug!("[end_overlay_stream_task] abort handle");
+        handle.abort();
     }
 }
 
@@ -191,73 +192,91 @@ pub fn listen_input_state() {
             std::thread::sleep(std::time::Duration::from_millis(focus_interval));
             match element::get_current_focus_info() {
                 Some(focused_input) => {
-                    let mut guard = FORMER_FOCUSED_INPUT.write().unwrap();
-                    if let Some(former_focused_input) = guard.as_ref() {
-                        if !former_focused_input.eq(&focused_input) {
-                            debug!("[listen_input_state] focus changed");
-                            save_history(&former_focused_input);
-                            *guard = Some(focused_input.clone());
-                            start_overlay(focused_input);
-                        } else {
-                            let new_content = &focused_input.input_element.content;
-                            let old_content = &former_focused_input.input_element.content;
-                            if new_content.ends_with("\u{200b}") 
-                                || new_content.ends_with("\u{200c}") 
-                                || new_content.ends_with("\u{200d}") 
-                                || new_content.ends_with("\u{FEFF}") 
-                            {
+                    // Decide actions while holding the lock, but perform heavy work after releasing it
+                    let (should_start_overlay, save_former_opt) = {
+                        let mut guard = FORMER_FOCUSED_INPUT.write().unwrap();
+                        if let Some(former_focused_input) = guard.as_ref() {
+                            if !former_focused_input.eq(&focused_input) {
+                                debug!("[listen_input_state] focus changed");
+                                let former_clone = former_focused_input.clone();
                                 *guard = Some(focused_input.clone());
-                            } else if new_content != old_content {
-                                let restart_overlay = {
-                                    let candidate = CANDIDATE.read().unwrap();
-                                    if !candidate.is_empty() {
-                                        let selected_candidate = SELECTED_CANDIDATE.read().unwrap();
-                                        let full_candidate = format!("{}{}", selected_candidate, candidate);
-                                        let candidate_chars: Vec<char> = full_candidate.chars().collect();
-                                        let new_content_chars: Vec<char> = new_content.chars().collect();
-                                        let mut matched = false;
-                                        for i in 0..candidate_chars.len() {
-                                            if new_content_chars.len() <= i {
-                                                break;
-                                            }
-                                            let candidate_prefix: String = candidate_chars[..=i].iter().collect();
-                                            let new_content_suffix: String = new_content_chars[new_content_chars.len()-i-1..].iter().collect();
-                                            if new_content_suffix == candidate_prefix {
-                                                matched = true;
-                                                break;
-                                            }
-                                        }
-                                        !matched
-                                    } else {
-                                        true
-                                    }
-                                };
-                                debug!("[listen_input_state] restart_overlay: {}", restart_overlay);
-                                if restart_overlay {
-                                    info!("[listen_input_state] content changed, restarting overlay");
-                                    save_history(&former_focused_input);
+                                (true, Some(former_clone))
+                            } else {
+                                let new_content = &focused_input.input_element.content;
+                                let old_content = &former_focused_input.input_element.content;
+                                if new_content.ends_with("\u{200b}")
+                                    || new_content.ends_with("\u{200c}")
+                                    || new_content.ends_with("\u{200d}")
+                                    || new_content.ends_with("\u{FEFF}")
+                                {
                                     *guard = Some(focused_input.clone());
-                                    start_overlay(focused_input);
+                                    (false, None)
+                                } else if new_content != old_content {
+                                    let restart_overlay = {
+                                        let candidate = CANDIDATE.read().unwrap();
+                                        if !candidate.is_empty() {
+                                            let selected_candidate = SELECTED_CANDIDATE.read().unwrap();
+                                            let full_candidate = format!("{}{}", selected_candidate, candidate);
+                                            let candidate_chars: Vec<char> = full_candidate.chars().collect();
+                                            let new_content_chars: Vec<char> = new_content.chars().collect();
+                                            let mut matched = false;
+                                            for i in 0..candidate_chars.len() {
+                                                if new_content_chars.len() <= i {
+                                                    break;
+                                                }
+                                                let candidate_prefix: String = candidate_chars[..=i].iter().collect();
+                                                let new_content_suffix: String = new_content_chars[new_content_chars.len() - i - 1..].iter().collect();
+                                                if new_content_suffix == candidate_prefix {
+                                                    matched = true;
+                                                    break;
+                                                }
+                                            }
+                                            !matched
+                                        } else {
+                                            true
+                                        }
+                                    };
+                                    debug!("[listen_input_state] restart_overlay: {}", restart_overlay);
+                                    if restart_overlay {
+                                        info!("[listen_input_state] content changed, restarting overlay");
+                                        let former_clone = former_focused_input.clone();
+                                        *guard = Some(focused_input.clone());
+                                        (true, Some(former_clone))
+                                    } else {
+                                        *guard = Some(focused_input.clone());
+                                        (false, None)
+                                    }
                                 } else {
                                     *guard = Some(focused_input.clone());
+                                    (false, None)
                                 }
-                            } else {
-                                *guard = Some(focused_input.clone());
                             }
+                        } else {
+                            info!("[listen_input_state] new input focused");
+                            *guard = Some(focused_input.clone());
+                            (true, None)
                         }
-                    } else {
-                        info!("[listen_input_state] new input focused");
-                        *guard = Some(focused_input.clone());
+                    };
+
+                    if let Some(former) = save_former_opt.as_ref() {
+                        save_history(former);
+                    }
+                    if should_start_overlay {
                         start_overlay(focused_input);
                     }
                 }
                 None => {
-                    let mut guard = FORMER_FOCUSED_INPUT.write().unwrap();
-                    if let Some(former_focused_input) = &*guard {
+                    // Clone former focused input, clear state, then perform heavy work outside the lock
+                    let former_opt = {
+                        let mut guard = FORMER_FOCUSED_INPUT.write().unwrap();
+                        let former = guard.clone();
+                        *guard = None;
+                        former
+                    };
+                    if let Some(former_focused_input) = &former_opt {
                         info!("[listen_input_state] focus lost");
                         save_history(former_focused_input);
                     }
-                    *guard = None;
                     debug!("[listen_input_state] focused_input: None");
                     end_overlay();
                 }
