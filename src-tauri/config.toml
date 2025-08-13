@@ -17,6 +17,11 @@ ignore_apps = [
     "Code.exe",
     "Trae.exe",
 ]
+# 自绘控件应用(需要通过复制粘贴的方式补全)
+self_draw_apps = [
+    "Weixin.exe",
+    "DingTalk.exe",
+]
 # 默认编辑控件类型
 default_edit_control_types = [50004]
 # 此控件类型包含文本内容时视为编辑控件
@@ -33,6 +38,9 @@ hastext_edit_control_types = [50026]
     50033,
 ]
 "msedge.exe" = [50003]
+"Weixin.exe" = [50032]
+"Notepad.exe" = [50030]
+"DingTalk.exe" = [50033]
 
 [keyboard]
 # 修饰键按下时, 不监听任何键盘按键

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct UiAutomationConfig {
     pub collect_interval: u64,
     pub ignore_apps: Vec<String>,
+    pub self_draw_apps: Vec<String>,
     pub default_edit_control_types: Vec<i32>,
     pub hastext_edit_control_types: Vec<i32>,
     pub app_edit_control_types: HashMap<String, Vec<i32>>,

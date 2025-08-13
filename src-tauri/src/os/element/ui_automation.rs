@@ -2,6 +2,12 @@ use log::{debug, error, info};
 use serde::Serialize;
 use windows::Win32::{ System::Com::*, UI::Accessibility::*};
 use windows::core::Interface;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+    KEYEVENTF_SCANCODE, MapVirtualKeyW, MAPVK_VK_TO_VSC,
+    SendInput, VK_LCONTROL, VK_V,
+    VIRTUAL_KEY,
+};
 
 use crate::os::{window, WindowElement};
 
@@ -90,22 +96,68 @@ pub fn get_focused_input() -> Option<FocusedInput> {
 
 pub fn fill_input(focused_input: FocusedInput, selected_chars: String) {
     debug!("[ui_automation::fill_input] selected_chars: {}", selected_chars);
-    let current_content = focused_input.input_element.content.clone();
-    let new_content = current_content + &selected_chars;
-    debug!("[ui_automation::fill_input] new_content: {}", new_content);
-    unsafe {
-        let automation = CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL).ok();
-        if let Some(automation) = automation {
-            if let Ok(element) = automation.GetFocusedElement() {
-                if let Ok(pattern_obj) = element.GetCurrentPattern(UIA_ValuePatternId) {
-                    if let Ok(value_pattern) = pattern_obj.cast::<IUIAutomationValuePattern>() {
-                        let bstr = windows::core::BSTR::from(new_content.clone());
-                        match value_pattern.SetValue(&bstr) {
-                            Ok(_) => {
-                                info!("[ui_automation::fill_input] SetValue success, filled {} chars", selected_chars.len());
-                            }
-                            Err(e) => {
-                                error!("[ui_automation::fill_input] SetValue failed: {}", e);
+    let app = focused_input.window_element.app.clone();
+    let ui_cfg = crate::config::get_config().unwrap().ui_automation;
+    let is_self_draw = ui_cfg.self_draw_apps.contains(&app);
+    if is_self_draw {
+        debug!("[ui_automation::fill_input] app {} is in self_draw_apps, use clipboard paste", app);
+        // 复制并粘贴选中的候选字符（不尝试读取/设置原有内容，直接在光标处粘贴）
+        let text_to_paste = selected_chars;
+        let original_clipboard = crate::os::clipboard::windows_clipboard::get_clipboard_text();
+        let set_ok = crate::os::clipboard::windows_clipboard::set_clipboard_text(&text_to_paste);
+        if !set_ok {
+            error!("[ui_automation::fill_input] failed to set clipboard text for paste in app {}", app);
+            return;
+        }
+
+        unsafe {
+            // 使用扫描码发送 Ctrl+V，兼容更多应用
+            let sc_ctrl = MapVirtualKeyW(VK_LCONTROL.0 as u32, MAPVK_VK_TO_VSC) as u16;
+            let sc_v = MapVirtualKeyW(VK_V.0 as u32, MAPVK_VK_TO_VSC) as u16;
+
+            let mut seq: [INPUT; 4] = [
+                INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT::default() } },
+                INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT::default() } },
+                INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT::default() } },
+                INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT::default() } },
+            ];
+            // Ctrl down (scancode)
+            seq[0].Anonymous.ki = KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: sc_ctrl, dwFlags: KEYEVENTF_SCANCODE, time: 0, dwExtraInfo: 0 };
+            // V down (scancode)
+            seq[1].Anonymous.ki = KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: sc_v, dwFlags: KEYEVENTF_SCANCODE, time: 0, dwExtraInfo: 0 };
+            // V up (scancode)
+            seq[2].Anonymous.ki = KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: sc_v, dwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 };
+            // Ctrl up (scancode)
+            seq[3].Anonymous.ki = KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: sc_ctrl, dwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 };
+
+            let sent = SendInput(&seq, std::mem::size_of::<INPUT>() as i32);
+            debug!("[ui_automation::fill_input] SendInput Ctrl+V (scancode) sent events: {}", sent);
+        }
+
+        // 等待系统处理粘贴
+        std::thread::sleep(std::time::Duration::from_millis(160));
+        if let Some(orig) = original_clipboard.as_ref() {
+            let _ = crate::os::clipboard::windows_clipboard::set_clipboard_text(orig);
+        }
+        return;
+    } else {
+        let current_content = focused_input.input_element.content.clone();
+        let new_content = current_content + &selected_chars;
+        debug!("[ui_automation::fill_input] new_content: {}", new_content);
+        unsafe {
+            let automation = CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL).ok();
+            if let Some(automation) = automation {
+                if let Ok(element) = automation.GetFocusedElement() {
+                    if let Ok(pattern_obj) = element.GetCurrentPattern(UIA_ValuePatternId) {
+                        if let Ok(value_pattern) = pattern_obj.cast::<IUIAutomationValuePattern>() {
+                            let bstr = windows::core::BSTR::from(new_content.clone());
+                            match value_pattern.SetValue(&bstr) {
+                                Ok(_) => {
+                                    info!("[ui_automation::fill_input] SetValue success, filled {} chars", selected_chars.len());
+                                }
+                                Err(e) => {
+                                    error!("[ui_automation::fill_input] SetValue failed: {}", e);
+                                }
                             }
                         }
                     }
@@ -113,84 +165,4 @@ pub fn fill_input(focused_input: FocusedInput, selected_chars: String) {
             }
         }
     }
-    
-    // TODO 剪贴板粘贴方案
-    // unsafe {
-    //     // 1. 让目标窗口成为前台窗口
-    //     SetForegroundWindow(HWND(focused_input.window_element.id as usize as *mut _));
-    //     // 2. 再 SetFocus 到输入框
-    //     if let Some(automation) = CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL).ok() {
-    //         if let Ok(element) = automation.GetFocusedElement() {
-    //             element.SetFocus().ok();
-    //         }
-    //     }
-    // }
-    // // 3. 再 SendInput
-    // unsafe {
-    //     let mut inputs = [
-    //         INPUT {
-    //             r#type: INPUT_KEYBOARD,
-    //             Anonymous: std::mem::zeroed(),
-    //         },
-    //         INPUT {
-    //             r#type: INPUT_KEYBOARD,
-    //             Anonymous: std::mem::zeroed(),
-    //         },
-    //         INPUT {
-    //             r#type: INPUT_KEYBOARD,
-    //             Anonymous: std::mem::zeroed(),
-    //         },
-    //         INPUT {
-    //             r#type: INPUT_KEYBOARD,
-    //             Anonymous: std::mem::zeroed(),
-    //         },
-    //     ];
-    //     // Ctrl down
-    //     inputs[0].Anonymous.ki = KEYBDINPUT {
-    //         wVk: VK_CONTROL,
-    //         wScan: 0,
-    //         dwFlags: KEYBD_EVENT_FLAGS(0),
-    //         time: 0,
-    //         dwExtraInfo: 0,
-    //     };
-    //     // V down
-    //     inputs[1].Anonymous.ki = KEYBDINPUT {
-    //         wVk: VK_V,
-    //         wScan: 0,
-    //         dwFlags: KEYBD_EVENT_FLAGS(0),
-    //         time: 0,
-    //         dwExtraInfo: 0,
-    //     };
-    //     // V up
-    //     inputs[2].Anonymous.ki = KEYBDINPUT {
-    //         wVk: VK_V,
-    //         wScan: 0,
-    //         dwFlags: KEYEVENTF_KEYUP,
-    //         time: 0,
-    //         dwExtraInfo: 0,
-    //     };
-    //     // Ctrl up
-    //     inputs[3].Anonymous.ki = KEYBDINPUT {
-    //         wVk: VK_CONTROL,
-    //         wScan: 0,
-    //         dwFlags: KEYEVENTF_KEYUP,
-    //         time: 0,
-    //         dwExtraInfo: 0,
-    //     };
-    //     SendInput(&[inputs[0]], std::mem::size_of::<INPUT>() as i32);
-    //     thread::sleep(Duration::from_millis(50));
-    //     SendInput(&[inputs[1]], std::mem::size_of::<INPUT>() as i32);
-    //     thread::sleep(Duration::from_millis(50));
-    //     SendInput(&[inputs[2]], std::mem::size_of::<INPUT>() as i32);
-    //     thread::sleep(Duration::from_millis(50));
-    //     SendInput(&[inputs[3]], std::mem::size_of::<INPUT>() as i32);
-    // }
-    // // 4. 粘贴后再关闭 overlay
-    // thread::sleep(Duration::from_millis(30));
-    // // 恢复原剪贴板
-    // let old_clipboard = get_clipboard_text();
-    // if let Some(old) = old_clipboard {
-    //     set_clipboard_text(&old);
-    // }
-    // debug!("[ui_automation::fill_input] fallback clipboard paste done");
 }

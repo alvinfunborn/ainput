@@ -34,6 +34,14 @@ pub unsafe extern "system" fn keyboard_hook_proc(
     }
 
     let key_info = *(lparam.0 as *const KBDLLHOOKSTRUCT);
+    // 忽略由程序注入的键盘事件，避免拦截我们通过 SendInput 注入的按键（如 Ctrl+V）
+    let flags = key_info.flags;
+    // LLKHF_INJECTED (0x00000010) 或 LLKHF_LOWER_IL_INJECTED (0x00000002)
+    if flags.contains(windows::Win32::UI::WindowsAndMessaging::KBDLLHOOKSTRUCT_FLAGS(0x00000010))
+        || flags.contains(windows::Win32::UI::WindowsAndMessaging::KBDLLHOOKSTRUCT_FLAGS(0x00000002))
+    {
+        return CallNextHookEx(None, code, wparam, lparam);
+    }
     let is_down = wparam.0 == WM_KEYDOWN as usize;
     let vk_code = key_info.vkCode as u16;
 

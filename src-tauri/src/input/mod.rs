@@ -21,6 +21,7 @@ static CANDIDATE: Lazy<RwLock<String>> = Lazy::new(|| RwLock::new(String::new())
 static OVERLAY_TASK_HANDLE: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
 static OVERLAY_CANCEL_TOKEN: Lazy<Mutex<Option<Arc<AtomicBool>>>> = Lazy::new(|| Mutex::new(None));
 static TASK_GENERATION: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
+static OVERLAY_IS_RUNNING: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
 
 pub fn set_input_state(state: bool) {
     debug!("[set_input_state] set to {}", state);
@@ -61,10 +62,15 @@ fn start_overlay(focused_input: element::FocusedInput) {
         }
     }
     
+    OVERLAY_IS_RUNNING.store(true, Ordering::SeqCst);
     let handle = tauri::async_runtime::spawn(async move {
-        let current_generation = TASK_GENERATION.load(Ordering::Relaxed);
+        let current_generation = TASK_GENERATION.load(Ordering::SeqCst);
         if my_generation < current_generation {
             info!("[start_overlay] Task generation {} is obsolete, current is {}. Aborting.", my_generation, current_generation);
+            // Mark not running if still current
+            if my_generation == current_generation {
+                OVERLAY_IS_RUNNING.store(false, Ordering::SeqCst);
+            }
             return;
         }
 
@@ -80,7 +86,7 @@ fn start_overlay(focused_input: element::FocusedInput) {
             }
         };
 
-        let current_generation = TASK_GENERATION.load(Ordering::Relaxed);
+        let current_generation = TASK_GENERATION.load(Ordering::SeqCst);
         if my_generation < current_generation {
             info!("[start_overlay] Task generation {} became obsolete during context gathering, current is {}. Aborting.", my_generation, current_generation);
             return;
@@ -108,6 +114,14 @@ fn start_overlay(focused_input: element::FocusedInput) {
                     .show();
             }
         }
+        // Mark task finished if still the latest generation
+        let current_generation = TASK_GENERATION.load(Ordering::SeqCst);
+        if my_generation == current_generation {
+            OVERLAY_IS_RUNNING.store(false, Ordering::SeqCst);
+            // Clear handle and cancel token to reflect finished state
+            let _ = OVERLAY_TASK_HANDLE.lock().unwrap().take();
+            let _ = OVERLAY_CANCEL_TOKEN.lock().unwrap().take();
+        }
     });
     *OVERLAY_TASK_HANDLE.lock().unwrap() = Some(handle);
 }
@@ -122,6 +136,7 @@ fn end_overlay_stream_task() {
         debug!("[end_overlay_stream_task] abort handle");
         handle.abort();
     }
+    OVERLAY_IS_RUNNING.store(false, Ordering::SeqCst);
 }
 
 fn end_overlay() {
@@ -132,10 +147,11 @@ fn end_overlay() {
 
 fn select_candidate(num: i32) {
     info!("[select_candidate] selecting {} chars", num);
-    let (selected_chars, selected_num): (String, i32) = {
-        let mut candidate = CANDIDATE.write().unwrap();
+    // 读取当前候选的快照，不立即修改全局候选，避免在填充之前将候选清空导致监听线程误判
+    let (selected_chars, selected_num, rest_after_select): (String, i32, String) = {
+        let current_candidate = CANDIDATE.read().unwrap().clone();
         let mut selected_num = num;
-        let candidate_chars: Vec<char> = candidate.chars().collect();
+        let candidate_chars: Vec<char> = current_candidate.chars().collect();
         if selected_num == -1 {
             selected_num = candidate_chars.len() as i32;
         }
@@ -148,13 +164,22 @@ fn select_candidate(num: i32) {
             return;
         }
         let rest: String = candidate_chars[selected_num as usize..].iter().collect();
-        *candidate = rest;
-        (selected_chars, selected_num)
+        (selected_chars, selected_num, rest)
     };
+
+    // 先填充到目标输入框，再更新内部状态与前端 overlay，避免“候选先变空再填充”的竞态
     debug!("[select_candidate] call element::fill_input");
-    let mut current_selected_candidate = SELECTED_CANDIDATE.write().unwrap();
-    *current_selected_candidate = format!("{}{}", current_selected_candidate, selected_chars);
-    element::fill_input(selected_chars);
+    element::fill_input(selected_chars.clone());
+
+    {
+        let mut current_selected_candidate = SELECTED_CANDIDATE.write().unwrap();
+        *current_selected_candidate = format!("{}{}", current_selected_candidate, selected_chars);
+    }
+    {
+        let mut candidate = CANDIDATE.write().unwrap();
+        *candidate = rest_after_select;
+    }
+
     debug!("[select_candidate] call overlay::overlay::select_candidate");
     overlay::overlay::select_candidate(selected_num);
 }
@@ -243,12 +268,28 @@ pub fn listen_input_state() {
                                         *guard = Some(focused_input.clone());
                                         (true, Some(former_clone))
                                     } else {
+                                        info!("[listen_input_state] content changed; no need to restart overlay");
                                         *guard = Some(focused_input.clone());
                                         (false, None)
                                     }
                                 } else {
+                                    // 内容不变，可能是自绘制控件导致无法感知变化。
+                                    // 若当前处于输入态，且没有候选、也没有进行中的候选请求，则主动重启 overlay。
+                                    let should_force_restart = {
+                                        let in_input = get_input_state();
+                                        let has_candidate = !CANDIDATE.read().unwrap().is_empty();
+                                        let has_running_task = OVERLAY_IS_RUNNING.load(Ordering::SeqCst);
+                                        info!("[listen_input_state] in_input: {}, has_candidate: {}, has_running_task: {}", in_input, has_candidate, has_running_task);
+                                        in_input && !has_candidate && !has_running_task
+                                    };
                                     *guard = Some(focused_input.clone());
-                                    (false, None)
+                                    if should_force_restart {
+                                        info!("[listen_input_state] content unchanged; in input without candidates or running task, restarting overlay");
+                                        (true, None)
+                                    } else {
+                                        info!("[listen_input_state] content unchanged; no need to restart overlay");
+                                        (false, None)
+                                    }
                                 }
                             }
                         } else {

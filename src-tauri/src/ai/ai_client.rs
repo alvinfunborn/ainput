@@ -279,7 +279,11 @@ impl AiClient {
             })))
         };
 
-        let client = Client::builder().no_proxy().build().unwrap();
+        let client = Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .unwrap();
         let req = client
             .post(config.api_url)
             .bearer_auth(config.api_key)
