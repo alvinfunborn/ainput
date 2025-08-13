@@ -17,7 +17,7 @@ ignore_apps = [
     "Code.exe",
     "Trae.exe",
 ]
-# 自绘控件应用(需要通过复制粘贴的方式补全)
+# 自绘控件应用(无法获取到输入框具体位置和输入框内容, 且需要通过复制粘贴的方式补全)
 self_draw_apps = [
     "Weixin.exe",
     "DingTalk.exe",
