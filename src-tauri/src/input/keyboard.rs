@@ -20,7 +20,7 @@ static KEYBOARD_STATE: Lazy<Mutex<KeyboardState>> =
     Lazy::new(|| Mutex::new(KeyboardState::new()));
 
 pub fn handle_keyboard_event(app_handle: &tauri::AppHandle, key: &str, is_press: bool) -> bool {
-    if !super::get_input_state() {
+    if !super::get_input_state() || !super::has_candidate() {
         return false;
     }
     debug!("[handle_keyboard_event] key: {}, is_down: {}", key, is_press);

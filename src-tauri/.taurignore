@@ -1,0 +1,4 @@
+input.db
+input.db-shm
+input.db-wal
+logs/

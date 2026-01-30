@@ -2,11 +2,11 @@ pub mod hook;
 pub mod keyboard;
 
 use std::sync::Mutex;
+use std::panic;
 use log::{debug, error, info};
 use once_cell::sync::Lazy;
 use crate::{ai::ai_client, config, context, os::element, overlay::{self, overlay::resize_overlay_window}};
 use tauri::{LogicalPosition, Manager};
-use tauri_plugin_notification::NotificationExt;
 use crate::APP_HANDLE;
 use std::sync::RwLock;
 use std::thread;
@@ -22,6 +22,9 @@ static OVERLAY_TASK_HANDLE: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| M
 static OVERLAY_CANCEL_TOKEN: Lazy<Mutex<Option<Arc<AtomicBool>>>> = Lazy::new(|| Mutex::new(None));
 static TASK_GENERATION: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 static OVERLAY_IS_RUNNING: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
+static LAST_OVERLAY_START_TIME: Lazy<Mutex<std::time::Instant>> = Lazy::new(|| Mutex::new(std::time::Instant::now()));
+/// 上次 AI 请求是否返回了空结果（用于决定是否需要防抖）
+static LAST_AI_WAS_EMPTY: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
 
 pub fn set_input_state(state: bool) {
     debug!("[set_input_state] set to {}", state);
@@ -34,10 +37,17 @@ pub fn get_input_state() -> bool {
     *input_state
 }
 
+pub fn has_candidate() -> bool {
+    !CANDIDATE.read().unwrap().is_empty()
+}
+
 fn start_overlay(focused_input: element::FocusedInput) {
     info!("[start_overlay] for app: {}, input: {}", focused_input.window_element.app, focused_input.input_element.text);
     set_input_state(true);
     end_overlay_stream_task();
+
+    // 更新最后一次启动时间，用于防抖
+    *LAST_OVERLAY_START_TIME.lock().unwrap() = std::time::Instant::now();
 
     let my_generation = TASK_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -61,7 +71,7 @@ fn start_overlay(focused_input: element::FocusedInput) {
             overlay::overlay::top_window(&window);
         }
     }
-    
+
     OVERLAY_IS_RUNNING.store(true, Ordering::SeqCst);
     let handle = tauri::async_runtime::spawn(async move {
         let current_generation = TASK_GENERATION.load(Ordering::SeqCst);
@@ -94,8 +104,13 @@ fn start_overlay(focused_input: element::FocusedInput) {
 
         let client = ai_client::AiClient::new();
         let cancel_token_clone = cancel_token.clone();
-        let result = client.stream_request_ai(context, |c| {
+        let received_any_token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let received_any_token_clone = received_any_token.clone();
+        let result = client.stream_request_ai(context, move |c| {
                 debug!("[start_overlay] stream_request_ai: {}", c);
+                received_any_token_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                // 收到内容，标记上次请求非空
+                LAST_AI_WAS_EMPTY.store(false, Ordering::SeqCst);
                 let mut candidate = CANDIDATE.write().unwrap();
                 if candidate.is_empty() && !c.trim().is_empty() {
                     resize_overlay_window(200.0, 40.0);
@@ -104,14 +119,40 @@ fn start_overlay(focused_input: element::FocusedInput) {
                 overlay::overlay::update_overlay(c);
             }, cancel_token_clone).await;
 
-        if let Err(e) = result {
-            error!("[start_overlay] stream_request_ai failed: {}", e);
-            if let Some(app_handle) = APP_HANDLE.lock().unwrap().as_ref() {
-                let _ = app_handle.notification()
-                    .builder()
-                    .title("ainput Network Error")
-                    .body(format!("Failed to get completion: {}", e))
-                    .show();
+        let was_cancelled = cancel_token.load(Ordering::SeqCst);
+        let got_tokens = received_any_token.load(std::sync::atomic::Ordering::SeqCst);
+
+        match &result {
+            Ok(_) if !got_tokens && !was_cancelled => {
+                // AI returned success but no content, mark as empty response
+                info!("[start_overlay] AI returned no tokens (empty response)");
+                LAST_AI_WAS_EMPTY.store(true, Ordering::SeqCst);
+                // Show empty response message, clear first to avoid accumulation
+                let error_msg = "⚠ AI returned empty response".to_string();
+                {
+                    let mut candidate = CANDIDATE.write().unwrap();
+                    candidate.clear();
+                    resize_overlay_window(300.0, 40.0);
+                    candidate.push_str(&error_msg);
+                }
+                overlay::overlay::update_overlay(error_msg);
+            }
+            Err(e) => {
+                error!("[start_overlay] stream_request_ai failed: {}", e);
+                LAST_AI_WAS_EMPTY.store(true, Ordering::SeqCst);
+                // Display error message as completion so user knows why it failed
+                // Use clear + push to avoid accumulating errors on retries
+                let error_msg = format!("⚠ {}", e);
+                {
+                    let mut candidate = CANDIDATE.write().unwrap();
+                    candidate.clear();
+                    resize_overlay_window(400.0, 40.0);
+                    candidate.push_str(&error_msg);
+                }
+                overlay::overlay::update_overlay(error_msg);
+            }
+            _ => {
+                // 正常返回内容，或被取消
             }
         }
         // Mark task finished if still the latest generation
@@ -159,12 +200,15 @@ fn select_candidate(num: i32) {
             selected_num = candidate_chars.len() as i32;
         }
         let selected_chars: String = candidate_chars[..selected_num as usize].iter().collect();
-        if selected_chars.is_empty() {
+        let cleaned = selected_chars.trim_end_matches(|c| c == '\r' || c == '\n');
+        if cleaned.is_empty() {
             debug!("[select_candidate] selected_chars is empty");
             return;
         }
+        let cleaned = cleaned.to_string();
+        let cleaned_len = cleaned.chars().count() as i32;
         let rest: String = candidate_chars[selected_num as usize..].iter().collect();
-        (selected_chars, selected_num, rest)
+        (cleaned, cleaned_len, rest)
     };
 
     // 先填充到目标输入框，再更新内部状态与前端 overlay，避免“候选先变空再填充”的竞态
@@ -186,7 +230,6 @@ fn select_candidate(num: i32) {
 
 fn save_history(focused_input: &element::FocusedInput) {
     info!("[save_history] for app: {}", focused_input.window_element.app);
-    let mut conn = crate::db::conn::establish_connection();
     let input_history = context::history::history::InputHistory {
         window_id: focused_input.window_element.id,
         window_app: focused_input.window_element.app.clone(),
@@ -206,7 +249,11 @@ fn save_history(focused_input: &element::FocusedInput) {
         input_content: focused_input.input_element.content.clone(),
         timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64,
     };
-    context::history::history::save_history(&mut conn, &input_history);
+    if let Err(e) = crate::db::conn::with_connection(|conn| {
+        context::history::history::save_history(conn, &input_history);
+    }) {
+        error!("[save_history] database error: {}", e);
+    }
 }
 
 pub fn listen_input_state() {
@@ -275,12 +322,36 @@ pub fn listen_input_state() {
                                 } else {
                                     // 内容不变，可能是自绘制控件导致无法感知变化。
                                     // 若当前处于输入态，且没有候选、也没有进行中的候选请求，则主动重启 overlay。
+                                    // 但需要防止 AI 返回空结果时无限重试，仅在上次为空响应时增加防抖机制。
                                     let should_force_restart = {
                                         let in_input = get_input_state();
                                         let has_candidate = !CANDIDATE.read().unwrap().is_empty();
                                         let has_running_task = OVERLAY_IS_RUNNING.load(Ordering::SeqCst);
-                                        info!("[listen_input_state] in_input: {}, has_candidate: {}, has_running_task: {}", in_input, has_candidate, has_running_task);
-                                        in_input && !has_candidate && !has_running_task
+                                        let last_was_empty = LAST_AI_WAS_EMPTY.load(Ordering::SeqCst);
+                                        info!("[listen_input_state] in_input: {}, has_candidate: {}, has_running_task: {}, last_was_empty: {}",
+                                              in_input, has_candidate, has_running_task, last_was_empty);
+                                        if in_input && !has_candidate && !has_running_task {
+                                            if last_was_empty {
+                                                // 上次 AI 返回空，需要防抖避免无限循环
+                                                let last_start = LAST_OVERLAY_START_TIME.lock().unwrap();
+                                                let elapsed = last_start.elapsed();
+                                                let retry_interval_ms = config::get_config().map(|c| c.overlay.retry_interval).unwrap_or(3000);
+                                                let min_interval = std::time::Duration::from_millis(retry_interval_ms);
+                                                if elapsed >= min_interval {
+                                                    info!("[listen_input_state] last AI was empty, but retry interval passed, allowing restart");
+                                                    true
+                                                } else {
+                                                    debug!("[listen_input_state] debounce: last AI was empty, only {}ms since last start, need {}ms",
+                                                           elapsed.as_millis(), min_interval.as_millis());
+                                                    false
+                                                }
+                                            } else {
+                                                // 上次 AI 正常返回，自绘制控件可能有新输入，立即重启
+                                                true
+                                            }
+                                        } else {
+                                            false
+                                        }
                                     };
                                     *guard = Some(focused_input.clone());
                                     if should_force_restart {
@@ -300,7 +371,12 @@ pub fn listen_input_state() {
                     };
 
                     if let Some(former) = save_former_opt.as_ref() {
-                        save_history(former);
+                        let former_clone = former.clone();
+                        if let Err(e) = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                            save_history(&former_clone);
+                        })) {
+                            error!("[listen_input_state] save_history panicked: {:?}", e);
+                        }
                     }
                     if should_start_overlay {
                         start_overlay(focused_input);
@@ -314,9 +390,14 @@ pub fn listen_input_state() {
                         *guard = None;
                         former
                     };
-                    if let Some(former_focused_input) = &former_opt {
+                    if let Some(former_focused_input) = former_opt {
                         info!("[listen_input_state] focus lost");
-                        save_history(former_focused_input);
+                        // Wrap save_history in catch_unwind to ensure end_overlay() always runs
+                        if let Err(e) = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                            save_history(&former_focused_input);
+                        })) {
+                            error!("[listen_input_state] save_history panicked on focus lost: {:?}", e);
+                        }
                     }
                     debug!("[listen_input_state] focused_input: None");
                     end_overlay();

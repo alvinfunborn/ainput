@@ -5,7 +5,7 @@ use windows::core::Interface;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
     KEYEVENTF_SCANCODE, MapVirtualKeyW, MAPVK_VK_TO_VSC,
-    SendInput, VK_LCONTROL, VK_V,
+    SendInput, VK_LCONTROL, VK_V, VK_END,
     VIRTUAL_KEY,
 };
 
@@ -73,7 +73,7 @@ pub fn get_focused_input() -> Option<FocusedInput> {
                 window_element, text, control_type.0, content);
             return None;
         }
-        
+
         let rect = focused.CurrentBoundingRectangle().ok()?;
         // 7. 构造 UIElement
         let input_element = UIElement {
@@ -154,6 +154,9 @@ pub fn fill_input(focused_input: FocusedInput, selected_chars: String) {
                             match value_pattern.SetValue(&bstr) {
                                 Ok(_) => {
                                     info!("[ui_automation::fill_input] SetValue success, filled {} chars", selected_chars.len());
+                                    // Move cursor to end after setting value
+                                    // 非自绘制应用, 需要发送 End 键将光标移动到输入框末尾, 因为 llm 生成内容也是基于输入框完整内容
+                                    send_end_key();
                                 }
                                 Err(e) => {
                                     error!("[ui_automation::fill_input] SetValue failed: {}", e);
@@ -164,5 +167,22 @@ pub fn fill_input(focused_input: FocusedInput, selected_chars: String) {
                 }
             }
         }
+    }
+}
+
+/// Send End key to move cursor to end of input
+fn send_end_key() {
+    unsafe {
+        let sc_end = MapVirtualKeyW(VK_END.0 as u32, MAPVK_VK_TO_VSC) as u16;
+        let mut seq: [INPUT; 2] = [
+            INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT::default() } },
+            INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT::default() } },
+        ];
+        // End down
+        seq[0].Anonymous.ki = KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: sc_end, dwFlags: KEYEVENTF_SCANCODE, time: 0, dwExtraInfo: 0 };
+        // End up
+        seq[1].Anonymous.ki = KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: sc_end, dwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 };
+        let sent = SendInput(&seq, std::mem::size_of::<INPUT>() as i32);
+        debug!("[send_end_key] sent End key events: {}", sent);
     }
 }

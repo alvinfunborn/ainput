@@ -21,10 +21,10 @@ ainput is an AI-assisted, system-wide input helper that shows smart, inline comp
 
 ## Demo
 
-- Smart completion overlay  
+- Smart completion overlay
 ![ainput_demo](docs/demo.gif)
 
-- Settings panel  
+- Settings panel
 ![ainput_settings](docs/settings.png)
 
 Full configuration: `src-tauri/config.toml`
@@ -68,6 +68,9 @@ cargo build
 # Dev mode
 cd ..
 npm run tauri dev
+
+# Build a binary package
+npm run tauri build
 ```
 
 Notes
@@ -88,6 +91,10 @@ ainput supports two integration modes:
   - Use a local CLI tool (e.g., `gemini-cli`) via command line.
   - Set `ai_client.provider = "CMD"` and `ai_client.cmd` to your executable command.
   - Make sure you have already logged into the tool via terminal if required.
+  - Prompt passing supports:
+    - `{{prompt_file}}` - temp file path (e.g., `cli <{{prompt_file}}`)
+    - `{{prompt}}` - inline content (e.g., `cli -p "{{prompt}}"`)
+    - No placeholder - prompt via stdin (e.g., `cli -p`)
 
 ---
 

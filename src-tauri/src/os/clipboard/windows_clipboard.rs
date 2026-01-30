@@ -57,7 +57,7 @@ pub fn get_clipboard_text() -> Option<String> {
                     }
                     let slice = std::slice::from_raw_parts(ptr as *const u16, len);
                     let text = OsString::from_wide(slice).to_string_lossy().to_string();
-                    GlobalUnlock(HGLOBAL(handle.0));
+                    let _ = GlobalUnlock(HGLOBAL(handle.0));
                     CloseClipboard().ok();
                     return Some(text);
                 }
@@ -82,7 +82,7 @@ pub fn handle_clipboard_update() {
 }
 
 pub fn get_clipboard_history() -> Vec<String> {
-    CLIPBOARD_HISTORY.lock().unwrap().get_all() 
+    CLIPBOARD_HISTORY.lock().unwrap().get_all()
 }
 
 pub fn set_clipboard_text(text: &str) -> bool {
@@ -97,7 +97,7 @@ pub fn set_clipboard_text(text: &str) -> bool {
                 let ptr = GlobalLock(hglobal) as *mut u8;
                 if !ptr.is_null() {
                     std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, ptr, size);
-                    GlobalUnlock(hglobal);
+                    let _ = GlobalUnlock(hglobal);
                     if SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hglobal.0))).is_ok() {
                         CloseClipboard().ok();
                         return true;

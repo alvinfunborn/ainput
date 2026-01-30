@@ -80,7 +80,7 @@ where
                      continue;
                 }
             }
-            
+
             break 'replacing_loop;
         }
     }
@@ -129,7 +129,7 @@ impl AiClient {
         F: FnMut(String) + Send + 'static,
     {
         info!("[AiClient::stream_request_mock] starting mock stream request");
-        
+
         let config = config::get_config().unwrap().ai_client;
         let apikey = config.api_key.clone();
         let mut conn = establish_connection();
@@ -146,7 +146,7 @@ impl AiClient {
         } else {
             String::new()
         };
-        
+
         info!("[AiClient::stream_request_mock] mock response: {}", mock_response);
 
         let chars: Vec<String> = mock_response.chars().map(|c| c.to_string()).collect();
@@ -188,44 +188,133 @@ impl AiClient {
         F: FnMut(String) + Send + 'static,
     {
         info!("[AiClient::stream_cmd] starting CLI stream request");
+
+        // Early cancellation check
+        if cancel_token.load(Ordering::SeqCst) {
+            info!("[AiClient::stream_cmd] cancelled before starting");
+            return Ok(());
+        }
+
         let config = config::get_config().unwrap().ai_client;
         let prompt = self.prompt_text(context);
-        let command_str = config.cmd;
+        let command_str = config.cmd.clone();
 
-        let mut command_parts = command_str.split_whitespace();
-        let executable = match command_parts.next() {
-            Some(e) => e,
-            None => return Err("Invalid cmd in config: missing executable".into()),
+        // Determine prompt passing mode based on placeholders:
+        // - {{prompt_file}}: replace with temp file path (for file redirect like <{{prompt_file}})
+        // - {{prompt}}: replace with prompt content directly (for -p "{{prompt}}")
+        // - no placeholder: pass prompt via stdin
+        let has_prompt_file = command_str.contains("{{prompt_file}}");
+        let has_prompt = command_str.contains("{{prompt}}");
+        let use_stdin = !has_prompt_file && !has_prompt;
+
+        let temp_file = if has_prompt_file {
+            let temp_dir = std::env::temp_dir();
+            let path = temp_dir.join(format!("ainput_prompt_{}.txt", std::process::id()));
+            std::fs::write(&path, &prompt)?;
+            Some(path)
+        } else {
+            None
         };
-        
-        let mut cmd = Command::new(executable);
-        cmd.args(command_parts);
-        cmd.stdin(Stdio::piped());
+
+        let final_cmd = if has_prompt_file {
+            let temp_file_path = temp_file.as_ref().unwrap().to_string_lossy().to_string();
+            command_str.replace("{{prompt_file}}", &temp_file_path)
+        } else if has_prompt {
+            // Escape quotes in prompt for shell
+            let escaped_prompt = prompt.replace("\"", "\\\"");
+            command_str.replace("{{prompt}}", &escaped_prompt)
+        } else {
+            command_str.clone()
+        };
+
+        info!("[AiClient::stream_cmd] executing: {}, use_stdin: {}", final_cmd, use_stdin);
+
+        // Use cmd.exe /c on Windows to properly handle .cmd/.bat files and shell operators
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = Command::new("cmd.exe");
+            c.args(["/c", &final_cmd]);
+            c
+        };
+        #[cfg(not(windows))]
+        let mut cmd = {
+            let mut c = Command::new("sh");
+            c.args(["-c", &final_cmd]);
+            c
+        };
+
+        if use_stdin {
+            cmd.stdin(Stdio::piped());
+        }
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
         #[cfg(windows)]
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
-        info!("[AiClient::stream_cmd] command: {:?}, prompt: {}", cmd, prompt);
+        let cleanup_temp = || {
+            if let Some(ref path) = temp_file {
+                let _ = std::fs::remove_file(path);
+            }
+        };
 
-        let mut child = cmd.spawn()?;
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            stdin.write_all(prompt.as_bytes())?;
+        // Check cancellation before spawning
+        if cancel_token.load(Ordering::SeqCst) {
+            info!("[AiClient::stream_cmd] cancelled before spawning process");
+            cleanup_temp();
+            return Ok(());
         }
 
-        let stdout = child.stdout.take().ok_or_else(|| "Failed to open stdout".to_string())?;
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                cleanup_temp();
+                error!("[AiClient::stream_cmd] failed to spawn command: {:?}", e);
+                return Err(format!("CMD error: failed to start: {}", e).into());
+            }
+        };
+
+        // Get child process ID for potential killing
+        let child_id = child.id();
+
+        // Write prompt to stdin if no placeholder was used
+        if use_stdin {
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                if let Err(e) = stdin.write_all(prompt.as_bytes()) {
+                    let _ = child.kill();
+                    cleanup_temp();
+                    error!("[AiClient::stream_cmd] failed to write to stdin: {:?}", e);
+                    return Err(format!("CMD error: failed to write input: {}", e).into());
+                }
+            }
+        }
+
+        let stdout = child.stdout.take().ok_or_else(|| {
+            let _ = child.kill();
+            cleanup_temp();
+            "CMD error: failed to open stdout".to_string()
+        })?;
+        let stderr = child.stderr.take();
         let reader = BufReader::new(stdout);
+
+        // Track if we received any output and if cancelled
+        let received_output = Arc::new(AtomicBool::new(false));
+        let received_output_clone = received_output.clone();
+        let was_cancelled = Arc::new(AtomicBool::new(false));
+        let was_cancelled_clone = was_cancelled.clone();
+        let cancel_token_clone = cancel_token.clone();
 
         let handle = thread::spawn(move || {
             for line in reader.lines() {
-                if cancel_token.load(Ordering::SeqCst) {
+                if cancel_token_clone.load(Ordering::SeqCst) {
                     info!("[AiClient::stream_cmd] stream cancelled by token");
+                    was_cancelled_clone.store(true, Ordering::SeqCst);
                     break;
                 }
                 match line {
                     Ok(line) => {
+                        received_output_clone.store(true, Ordering::SeqCst);
                         on_token(line + "\n");
                     }
                     Err(e) => {
@@ -236,17 +325,96 @@ impl AiClient {
             }
         });
 
+        // Monitor cancel_token and kill child process if cancelled
+        let cancel_token_monitor = cancel_token.clone();
+        let monitor_handle = thread::spawn(move || {
+            loop {
+                if cancel_token_monitor.load(Ordering::SeqCst) {
+                    info!("[AiClient::stream_cmd] killing child process {} due to cancellation", child_id);
+                    #[cfg(windows)]
+                    {
+                        // On Windows, use taskkill to kill the process tree
+                        let _ = Command::new("taskkill")
+                            .args(["/F", "/T", "/PID", &child_id.to_string()])
+                            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                            .output();
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        // On Unix, send SIGTERM to process group
+                        unsafe {
+                            libc::kill(-(child_id as i32), libc::SIGTERM);
+                        }
+                    }
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        });
+
         handle.join().unwrap();
-        child.wait()?;
-        info!("[AiClient::stream_cmd] stream finished");
+
+        // Wait for child process (may already be killed)
+        let exit_status = child.wait();
+
+        // Stop the monitor thread by ensuring cancel_token is checked
+        // The monitor will exit naturally after detecting cancellation or when we're done
+        drop(monitor_handle); // Let it run to completion or be cleaned up
+
+        info!("[AiClient::stream_cmd] stream finished with status: {:?}", exit_status);
+
+        // If cancelled, don't report errors
+        if was_cancelled.load(Ordering::SeqCst) || cancel_token.load(Ordering::SeqCst) {
+            cleanup_temp();
+            return Ok(());
+        }
+
+        // Check if command failed
+        if let Ok(status) = exit_status {
+            if !status.success() {
+                let exit_code = status.code().unwrap_or(-1);
+                let stderr_content = if let Some(mut stderr) = stderr {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    let _ = stderr.read_to_string(&mut buf);
+                    buf.trim().to_string()
+                } else {
+                    String::new()
+                };
+
+                let error_msg = if !stderr_content.is_empty() {
+                    format!("CMD error (exit {}): {}", exit_code, stderr_content.chars().take(200).collect::<String>())
+                } else {
+                    format!("CMD error: command exited with code {}", exit_code)
+                };
+                error!("[AiClient::stream_cmd] {}", error_msg);
+                cleanup_temp();
+                return Err(error_msg.into());
+            }
+        }
+
+        // Check if we received any output
+        if !received_output.load(Ordering::SeqCst) {
+            cleanup_temp();
+            return Err("CMD error: no output received".into());
+        }
+
+        cleanup_temp();
         Ok(())
     }
 
-    async fn stream_api<F>(&self, context: Context, mut on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    async fn stream_api<F>(&self, context: Context, on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         F: FnMut(String) + Send + 'static,
     {
         info!("[AiClient::stream_api] starting AI stream request");
+
+        // Early cancellation check before any processing
+        if cancel_token.load(Ordering::SeqCst) {
+            info!("[AiClient::stream_api] cancelled before starting");
+            return Ok(());
+        }
+
         let config = config::get_config().unwrap().ai_client;
         let prompt = self.prompt_text(context);
 
@@ -256,15 +424,56 @@ impl AiClient {
         let mapping = anonymized_data.mapping;
         debug!("[AiClient::stream_api] mapping: {:?}", mapping);
 
+        // Check cancellation before sending request to save tokens
+        if cancel_token.load(Ordering::SeqCst) {
+            info!("[AiClient::stream_api] cancelled before sending request");
+            return Ok(());
+        }
+
         enum Processor {
             Passthrough(Box<dyn FnMut(String) + Send>),
             Deanonymizing(StreamingDeanonymizer<Box<dyn FnMut(String) + Send>>),
         }
 
         let apikey = config.api_key.clone();
-        let mut conn = establish_connection();
         let prompt_token_count = prompt.chars().count() as i64;
+
+        let client = Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .unwrap();
+
+        let api_url = config.api_url.clone();
+        let request = client
+            .post(&api_url)
+            .bearer_auth(config.api_key.clone())
+            .json(&serde_json::json!({
+                "model": config.api_model,
+                "messages": [
+                    { "role": "user", "content": anonymized_prompt }
+                ],
+                "stream": true
+            }));
+
+        // Use tokio::select! to make the request cancellable
+        let response: reqwest::Response = tokio::select! {
+            res = request.send() => res?,
+            _ = async {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    if cancel_token.load(Ordering::SeqCst) { break; }
+                }
+            } => {
+                info!("[AiClient::stream_api] request cancelled during send");
+                return Ok(());
+            }
+        };
+
+        // Only count prompt tokens after request is successfully sent
+        let mut conn = establish_connection();
         increment_used_token(&mut conn, &apikey, prompt_token_count);
+
         let mut processor = if mapping.is_empty() {
             let mut f = on_token;
             Processor::Passthrough(Box::new(move |token: String| {
@@ -279,27 +488,34 @@ impl AiClient {
             })))
         };
 
-        let client = Client::builder()
-            .no_proxy()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .unwrap();
-        let req = client
-            .post(config.api_url)
-            .bearer_auth(config.api_key)
-            .json(&serde_json::json!({
-                "model": config.api_model,
-                "messages": [
-                    { "role": "user", "content": anonymized_prompt }
-                ],
-                "stream": true
-            }))
-            .send()
-            .await?;
+        let status = response.status();
+        info!("[AiClient::stream_api] response status: {}", status);
+
+        // Check HTTP status code
+        if !status.is_success() {
+            let error_body = response.text().await.unwrap_or_else(|_| "unable to read response body".to_string());
+            error!("[AiClient::stream_api] API returned error status {}: {}", status, error_body);
+
+            // Try to parse error JSON
+            let error_msg = if let Ok(val) = serde_json::from_str::<Value>(&error_body) {
+                if let Some(msg) = val["error"]["message"].as_str() {
+                    format!("API error ({}): {}", status.as_u16(), msg)
+                } else if let Some(msg) = val["message"].as_str() {
+                    format!("API error ({}): {}", status.as_u16(), msg)
+                } else {
+                    format!("API error ({}): {}", status.as_u16(), error_body.chars().take(100).collect::<String>())
+                }
+            } else {
+                format!("API error ({}): {}", status.as_u16(), error_body.chars().take(100).collect::<String>())
+            };
+            return Err(error_msg.into());
+        }
 
         info!("[AiClient::stream_api] request sent, waiting for stream response");
 
-        let mut stream = req.bytes_stream();
+        let mut stream = response.bytes_stream();
+        let mut received_any_data = false;
+
         while let Some(item) = stream.next().await {
             if cancel_token.load(Ordering::SeqCst) {
                 info!("[AiClient::stream_api] stream cancelled by token");
@@ -307,26 +523,55 @@ impl AiClient {
             }
             match item {
                 Ok(chunk) => {
+                    received_any_data = true;
                     for line in chunk.split(|&b| b == b'\n') {
+                        if line.is_empty() { continue; }
+
+                        // Check for non-SSE error response
+                        if !line.starts_with(b"data: ") && line.starts_with(b"{") {
+                            if let Ok(val) = serde_json::from_slice::<Value>(line) {
+                                if let Some(err_msg) = val["error"]["message"].as_str() {
+                                    error!("[AiClient::stream_api] API error in response: {}", err_msg);
+                                    return Err(format!("API error: {}", err_msg).into());
+                                }
+                            }
+                        }
+
                         if line.starts_with(b"data: ") {
                             let json_str = &line[6..];
                             if json_str == b"[DONE]" { continue; }
                             if let Ok(val) = serde_json::from_slice::<Value>(json_str) {
+                                // Check for errors in stream
+                                if let Some(err_msg) = val["error"]["message"].as_str() {
+                                    error!("[AiClient::stream_api] API error in stream: {}", err_msg);
+                                    return Err(format!("API stream error: {}", err_msg).into());
+                                }
                                 if let Some(token) = val["choices"][0]["delta"]["content"].as_str() {
                                     match &mut processor {
                                         Processor::Passthrough(f) => f(token.to_string()),
                                         Processor::Deanonymizing(d) => d.process(token),
                                     }
                                 }
+                            } else {
+                                // JSON parse failed, log it
+                                let line_str = String::from_utf8_lossy(json_str);
+                                if !line_str.trim().is_empty() {
+                                    debug!("[AiClient::stream_api] failed to parse JSON: {}", line_str);
+                                }
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    error!("[AiClient::stream_api] error: {:?}", e);
+                    error!("[AiClient::stream_api] stream error: {:?}", e);
                     return Err(Box::new(e));
                 }
             }
+        }
+
+        if !received_any_data {
+            error!("[AiClient::stream_api] no data received from API");
+            return Err("API error: no data received".into());
         }
 
         if let Processor::Deanonymizing(mut d) = processor {

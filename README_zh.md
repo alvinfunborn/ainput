@@ -1,6 +1,6 @@
 # ainput
 
-> ainput 是一款支持智能候选的 AI 驱动全局输入法。  
+> ainput 是一款支持智能候选的 AI 驱动全局输入法。
 >
 > ainput 支持多种大模型服务和本地 AI 工具，提供输入历史、剪贴板等上下文的智能候选，配置灵活，注重隐私。
 > ⚠️ 本项目涉及输入内容、窗口信息等数据上传至大模型服务商，详见下文"隐私声明"
@@ -17,7 +17,7 @@
 
 ## 使用示例
 
-- **AI 智能候选**  
+- **AI 智能候选**
 ![ainput_demo](docs/demo.gif)
 
 - **修改配置**
@@ -102,6 +102,9 @@ cargo build
 # 开发模式启动
 cd ..
 npm run tauri dev
+
+# 打包
+npm run tauri build
 ```
 
 - 配置详见 `src-tauri/config.toml`
@@ -113,12 +116,17 @@ npm run tauri dev
 
 ainput 支持两种大模型调用模式，用户可根据自身需求和已购服务自由选择：
 
-- **API模式**  
+- **API模式**
   通过 HTTP API 调用大模型服务（OpenAI大模型API接口定义服务商，如 OpenAI、火山方舟、阿里云百炼 等），需在 `config.toml` 中配置 API Key。适用于拥有相关 API 权限的用户。
 
-- **CMD模式**  
-  通过本机命令行工具（如 `gemini-cli`）调用大模型。适用于已安装并配置好命令行 AI 工具，有结合本机系统能力需求的用户。  
+- **CMD模式**
+  通过本机命令行工具（如 `gemini-cli`）调用大模型。适用于已安装并配置好命令行 AI 工具，有结合本机系统能力需求的用户。
   > **注意：** 若使用 `gemini-cli`，请确保已在本机命令行中完成登录（如运行 `gemini`），否则无法正常生成候选。
+
+  Prompt 传递方式：
+  - `{{prompt_file}}` - 临时文件路径（如 `cli <{{prompt_file}}`）
+  - `{{prompt}}` - 内联内容（如 `cli -p "{{prompt}}"`）
+  - 无占位符 - 通过 stdin 传递（如 `cli -p`）
 
 可在 `config.toml` 中通过 `ai_client.provider` 字段选择模式，并配置相应参数。
 
