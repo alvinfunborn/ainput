@@ -1,47 +1,64 @@
 name: Release
-
 on:
   push:
-    tags:
-      - 'v*'
-
+    tags: ['v*']
 jobs:
-  release:
-    runs-on: windows-latest
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+      - run: npm ci
+      - run: npm run build
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+      - name: Build Windows executable
+        if: runner.os == 'Windows'
+        run: |
+          npm run tauri -- build --no-bundle
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path src-tauri/target/release/ainput.exe, src-tauri/config.toml -DestinationPath ainput.zip -Force
+      - name: Build universal macOS app
+        if: runner.os == 'macOS'
+        run: |
+          npm run tauri -- build --target universal-apple-darwin --bundles app
+          APP=src-tauri/target/universal-apple-darwin/release/bundle/macos/ainput.app
+          lipo "$APP/Contents/MacOS/ainput" -archs | python3 -c 'import sys; assert {"arm64", "x86_64"} <= set(sys.stdin.read().split())'
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" ainput-macos-universal.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ runner.os }}
+          path: ainput*.zip
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/download-artifact@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+          pattern: release-*
+          merge-multiple: true
+      - run: sha256sum ainput*.zip > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
         with:
-          workspaces: './src-tauri -> target'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build frontend & Tauri
-        run: npm run build && npm run tauri build
-
-      - name: Create ainput.zip
-        run: |
-          Compress-Archive -Path src-tauri\target\release\ainput.exe, src-tauri\config.toml -DestinationPath ainput.zip -Force
-
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ainput.zip
+          files: |
+            ainput*.zip
+            SHA256SUMS
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

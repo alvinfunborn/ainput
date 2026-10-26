@@ -1,0 +1,161 @@
+[system]
+completion_enabled = true
+# 是否显示托盘图标
+show_tray_icon = true
+# 是否开机启动
+start_at_login = false
+# 日志级别
+logging_level = "info"
+# 历史记录过期时间/d
+history_ttl = 1000
+
+[ui_automation]
+# 窗口元素收集间隔/ms
+collect_interval = 100
+# 忽略应用
+# macOS executable names (for example: TextEdit, Safari, Code).
+ignore_apps = []
+self_draw_apps = []
+# 默认编辑控件类型
+default_edit_control_types = [50004]
+# 此控件类型包含文本内容时视为编辑控件
+hastext_edit_control_types = [50026]
+
+# 特殊应用的额外编辑控件类型
+[ui_automation.app_edit_control_types]
+
+[keyboard]
+# 修饰键按下时, 不监听任何键盘按键
+propagation_modifier = [
+    "LCtrl",
+    "RCtrl",
+    "LAlt",
+    "RAlt",
+    "LWin",
+    "RWin",
+    "LShift",
+    "RShift",
+]
+
+# 可用键盘按键, 包括0-9a-z,./;'[]\-=`
+# macOS hardware key codes. LWin/RWin mean Command; LAlt/RAlt mean Option.
+[keyboard.available_key]
+Backspace = 51
+CapsLock = 57
+Delete = 117
+Down = 125
+End = 119
+Enter = 36
+Esc = 53
+Home = 115
+LAlt = 58
+LCtrl = 59
+LShift = 56
+LWin = 55
+Left = 123
+PageDown = 121
+PageUp = 116
+RAlt = 61
+RCtrl = 62
+RShift = 60
+RWin = 54
+Right = 124
+Space = 49
+Tab = 48
+Up = 126
+
+[ai_client]
+# AI provider type: "API" or "CMD"
+provider = "API"
+# For "API" provider
+api_key = ""
+api_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+api_model = "gemini-3.5-flash-lite"
+# Empty follows environment or system HTTP(S) proxy settings.
+api_proxy = ""
+# For "CMD" provider - supports placeholders:
+#   {{prompt_file}} - temp file path (for file redirect, e.g., <{{prompt_file}})
+#   {{prompt}} - prompt content inline (for -p "{{prompt}}")
+#   no placeholder - prompt passed via stdin
+cmd = "gemini -o text <{{prompt_file}}"
+# 完整提示词, 可用变量: app_name, window_title, window_handle, input_title, input_handle, input_content, input_history, clipboard_contents
+prompt = """
+Complete the text in the input box for {{app_name}} (window: "{{window_title}}").
+
+<Context>
+<RecentInputs>
+{{input_history}}
+</RecentInputs>
+<Clipboard>
+{{clipboard_contents}}
+</Clipboard>
+</Context>
+
+<CurrentInput>
+{{input_content}}
+</CurrentInput>
+
+<Rules>
+1. Output ONLY the completion text, no explanation or tags
+2. Match the language and style of the current input
+3. Use context (recent inputs, clipboard) when relevant
+4. If input appears complete, output nothing
+5. Complete naturally - a word, phrase, or sentence as appropriate
+</Rules>
+
+<Examples>
+Input: "不知" → "道"
+Input: "hello wo" → "rld"
+Input: "Attention i" → "s all you need"
+Input: "The API endpoint is" + Clipboard:"https://api.example.com" → " https://api.example.com"
+Input: "" + RecentInput:"好的，我知道了" → "好的"
+</Examples>
+"""
+
+[keybinding]
+# 退出候选
+exit_overlay = ["Esc"]
+# 接受候选
+accept_candidate = ["Tab"]
+# 选择候选的第一个字符
+select_candidate_char_1 = ["1"]
+# 选择候选的第二个字符
+select_candidate_char_2 = []
+select_candidate_char_3 = []
+select_candidate_char_4 = []
+select_candidate_char_5 = []
+select_candidate_char_6 = []
+select_candidate_char_7 = []
+select_candidate_char_8 = []
+select_candidate_char_9 = []
+
+[privacy]
+# 是否启用隐私保护
+enable = true
+# 隐私保护规则, 过滤手机号, 身份证号, IP, 常见API Key
+rules = ["(1[3-9]\\d{9})|(\b\\d{17}[\\dXx]\b)|(\b(?:\\d{1,3}\\.){3}\\d{1,3}\b)|(sk-[a-zA-Z0-9]{20,})"]
+
+[overlay]
+# 候选框刷新间隔/ms
+refresh_interval = 50
+# 兼容旧配置；空结果不再定时重试，输入变化后才请求
+retry_interval = 3000
+# 候选框相对位置/px
+relative_x = 0
+relative_y = -28
+# 候选框样式
+style = """
+{
+  font-size: 1em;
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  margin: 0;
+  padding: 2px 4px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #222;
+  border-radius: 6px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.18), 0 1.5px 4px rgba(0,0,0,0.12);
+  border: 1px solid rgba(0,0,0,0.06);
+  backdrop-filter: blur(8px);
+  transition: box-shadow 0.2s, background 0.2s;
+}
+"""

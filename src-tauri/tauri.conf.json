@@ -13,18 +13,22 @@
     "windows": [
       {
         "title": "ainput",
-        "width": 0,
-        "height": 0,
+        "width": 1,
+        "height": 1,
         "resizable": true,
         "fullscreen": false,
         "decorations": false,
         "transparent": true,
-        "shadow": false
+        "shadow": false,
+        "visible": false,
+        "focus": false,
+        "skipTaskbar": true
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
@@ -35,6 +39,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
   }
 }

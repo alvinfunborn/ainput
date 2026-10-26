@@ -1,16 +1,19 @@
 use diesel::{sql_query, sqlite::SqliteConnection, Connection, RunQueryDsl};
+use log::error;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
-use log::error;
 
 static DB_CONNECTION: Lazy<Mutex<SqliteConnection>> = Lazy::new(|| {
-    let mut conn = SqliteConnection::establish("input.db").expect("Error connecting to input.db");
+    let mut conn =
+        SqliteConnection::establish(&crate::paths::data_dir().join("input.db").to_string_lossy())
+            .expect("Error connecting to input.db");
     // Use DELETE journal mode to avoid -shm/-wal files triggering Tauri dev rebuilds
     // WAL is unnecessary since we use a single shared connection with mutex
     let _ = sql_query("PRAGMA journal_mode=DELETE;").execute(&mut conn);
     let _ = sql_query("PRAGMA busy_timeout=5000;").execute(&mut conn);
     // 自动建表 input
-    sql_query(r#"
+    sql_query(
+        r#"
         CREATE TABLE IF NOT EXISTS input (
             id TEXT PRIMARY KEY,
             window_id TEXT,
@@ -31,7 +34,10 @@ static DB_CONNECTION: Lazy<Mutex<SqliteConnection>> = Lazy::new(|| {
             input_content TEXT,
             timestamp BIGINT
         );
-    "#).execute(&mut conn).expect("Failed to create input table");
+    "#,
+    )
+    .execute(&mut conn)
+    .expect("Failed to create input table");
     Mutex::new(conn)
 });
 
@@ -51,10 +57,13 @@ where
 
 #[deprecated(note = "Use with_connection() instead for thread-safe access")]
 pub fn establish_connection() -> SqliteConnection {
-    let mut conn = SqliteConnection::establish("input.db").expect("Error connecting to input.db");
+    let mut conn =
+        SqliteConnection::establish(&crate::paths::data_dir().join("input.db").to_string_lossy())
+            .expect("Error connecting to input.db");
     let _ = sql_query("PRAGMA journal_mode=DELETE;").execute(&mut conn);
     let _ = sql_query("PRAGMA busy_timeout=5000;").execute(&mut conn);
-    sql_query(r#"
+    sql_query(
+        r#"
         CREATE TABLE IF NOT EXISTS input (
             id TEXT PRIMARY KEY,
             window_id TEXT,
@@ -75,6 +84,9 @@ pub fn establish_connection() -> SqliteConnection {
             input_content TEXT,
             timestamp BIGINT
         );
-    "#).execute(&mut conn).expect("Failed to create input table");
+    "#,
+    )
+    .execute(&mut conn)
+    .expect("Failed to create input table");
     conn
 }

@@ -1,5 +1,7 @@
 # ainput
 
+支持 Windows 和 macOS；Mac 使用辅助功能读取可访问的输入框并写入候选。构建、权限设置和兼容范围见 [macOS 说明](docs/macos.md)。
+
 > ainput 是一款支持智能候选的 AI 驱动全局输入法。
 >
 > ainput 支持多种大模型服务和本地 AI 工具，提供输入历史、剪贴板等上下文的智能候选，配置灵活，注重隐私。
@@ -30,22 +32,24 @@
 
 ## 实现原理
 
-ainput 的核心能力依赖于 Windows UI Automation —— 微软官方提供的自动化API，能够跨进程、跨窗口地枚举所有UI控件（如按钮、文本框、窗口、菜单等）。
+ainput 在 Windows 使用 UI Automation，在 macOS 使用 Accessibility（AX），读取当前聚焦且可访问的编辑控件。
 
-本项目通过 Tauri 后端（Rust）集成 Windows UI Automation，主要流程如下：
+Windows 的 Tauri 后端（Rust）集成 UI Automation，主要流程如下：
 
 - 利用 Rust 的 `windows` crate 调用 UI Automation COM 接口，获取聚焦桌面窗口和控件
 - 获取每个控件的类型（ControlType）、名称、可见性、可交互性、屏幕坐标、窗口层级等属性
 - 结合自定义控件类型映射和过滤规则，生成 AI 候选点
 - 后端将控件信息和 AI 候选点数据传递给前端/Overlay 进行渲染和交互
 
-通过 Windows UI Automation，ainput 能够实现对所有可见窗口和控件的精准捕捉和操作，为全局 AI 候选提供底层支撑。
+macOS 通过独立 AX 工作线程读取文本与光标位置，使用事件监听器处理候选快捷键，并显示不抢焦点的悬浮窗。接受候选前会重新核对应用、控件、文本和光标；密码框、选中文本及未暴露 AX 编辑能力的自绘控件不会触发补全。
+
+Mac 构建：`npm ci && npm run tauri -- build --bundles app`。应用位于 `src-tauri/target/release/bundle/macos/ainput.app`。放入“应用程序”后，在设置中授予辅助功能权限并配置 AI 服务。详细步骤、双架构构建及验收清单见 [macOS 说明](docs/macos.md)。
 
 ---
 
 ## 自绘控件应用的限制与注意事项
 
-部分应用的输入框是“自绘控件”（如微信、钉钉等），它们不完全遵循标准 UI Automation 的文本读写能力。为兼容此类应用，ainput 会采用“剪贴板 + Ctrl+V 粘贴”的方式进行填充，这带来一些使用局限：
+以下兼容机制仅适用于 Windows。部分应用的输入框是“自绘控件”（如微信、钉钉等），它们不完全遵循标准 UI Automation 的文本读写能力。为兼容此类应用，ainput 会采用“剪贴板 + Ctrl+V 粘贴”的方式进行填充，这带来一些使用局限：
 
 - 填充方式与行为
   - 采用“设置剪贴板 → 模拟 Ctrl+V → 等待 → 恢复剪贴板”的流程，不调用 `SetValue`。

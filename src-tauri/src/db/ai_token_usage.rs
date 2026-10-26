@@ -18,19 +18,22 @@ pub struct AiTokenUsage {
 }
 
 pub fn ensure_ai_token_usage_table(conn: &mut SqliteConnection) {
-    conn.batch_execute(r#"
+    conn.batch_execute(
+        r#"
         CREATE TABLE IF NOT EXISTS ai_token_usage (
             apikey TEXT PRIMARY KEY,
             used_token INTEGER
         )
-    "#).expect("Failed to create ai_token_usage table");
+    "#,
+    )
+    .expect("Failed to create ai_token_usage table");
 }
 
-pub fn get_used_token(conn: &mut SqliteConnection, apikey: &str) -> i64 {
+pub fn get_used_token(conn: &mut SqliteConnection, apikey_: &str) -> i64 {
     use self::ai_token_usage::dsl::*;
     ensure_ai_token_usage_table(conn);
     ai_token_usage
-        .filter(apikey.eq(apikey))
+        .filter(apikey.eq(apikey_))
         .select(used_token)
         .first::<i64>(conn)
         .unwrap_or(0)
@@ -39,17 +42,38 @@ pub fn get_used_token(conn: &mut SqliteConnection, apikey: &str) -> i64 {
 pub fn set_used_token(conn: &mut SqliteConnection, apikey_: &str, value: i64) {
     use self::ai_token_usage::dsl::*;
     ensure_ai_token_usage_table(conn);
-    let usage = AiTokenUsage { apikey: apikey_.to_string(), used_token: value };
-    diesel::replace_into(ai_token_usage).values(&usage).execute(conn).ok();
+    let usage = AiTokenUsage {
+        apikey: apikey_.to_string(),
+        used_token: value,
+    };
+    diesel::replace_into(ai_token_usage)
+        .values(&usage)
+        .execute(conn)
+        .ok();
 }
 
 pub fn increment_used_token(conn: &mut SqliteConnection, apikey_: &str, delta: i64) {
     let current = get_used_token(conn, apikey_);
     set_used_token(conn, apikey_, current + delta);
-} 
-    
+}
+
 #[tauri::command]
 pub fn get_used_token_command(apikey: String) -> i64 {
     let mut conn = crate::db::conn::establish_connection();
     crate::db::ai_token_usage::get_used_token(&mut conn, &apikey)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn usage_is_scoped_to_the_selected_key() {
+        let mut conn = SqliteConnection::establish(":memory:").unwrap();
+        set_used_token(&mut conn, "first", 10);
+        set_used_token(&mut conn, "second", 20);
+        increment_used_token(&mut conn, "second", 5);
+        assert_eq!(get_used_token(&mut conn, "first"), 10);
+        assert_eq!(get_used_token(&mut conn, "second"), 25);
+        assert_eq!(get_used_token(&mut conn, "unknown"), 0);
+    }
 }

@@ -3,10 +3,10 @@ pub mod history;
 use log::debug;
 use serde::Serialize;
 
-use crate::os::clipboard::windows_clipboard::get_clipboard_history;
-use crate::os::element::ui_automation::FocusedInput;
-use crate::db::conn::establish_connection;
 use crate::context::history::history::get_history;
+use crate::db::conn::establish_connection;
+use crate::os::clipboard::get_clipboard_history;
+use crate::os::element::ui_automation::FocusedInput;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Context {
@@ -33,13 +33,17 @@ fn truncate_input_content(s: &str) -> String {
 
 impl Context {
     pub fn new(app: &FocusedInput) -> Option<Self> {
+        #[cfg(target_os = "macos")]
+        let content = super::os::element::ui_automation::text_before_selection(app)?;
+        #[cfg(not(target_os = "macos"))]
+        let content = app.input_element.content.clone();
         let app_context = InputContext {
             window_id: app.window_element.id.to_string(),
             window_app: app.window_element.app.clone(),
             window_title: app.window_element.title.clone(),
             input_id: app.input_element.id.clone(),
             input_title: app.input_element.text.clone(),
-            input_content: truncate_input_content(&app.input_element.content),
+            input_content: truncate_input_content(&content),
         };
         let mut conn = establish_connection();
         debug!("[Context::new] app: {:?}", app);
@@ -58,14 +62,17 @@ impl Context {
                 vec![]
             }
         };
-        let context_input_history = history.iter().map(|h| InputContext {
-            window_id: h.window_id.clone(),
-            window_app: h.window_app.clone(),
-            window_title: h.window_title.clone(),
-            input_id: h.input_id.clone(),
-            input_title: h.input_title.clone(),
-            input_content: truncate_input_content(&h.input_content),
-        }).collect::<Vec<InputContext>>();
+        let context_input_history = history
+            .iter()
+            .map(|h| InputContext {
+                window_id: h.window_id.clone(),
+                window_app: h.window_app.clone(),
+                window_title: h.window_title.clone(),
+                input_id: h.input_id.clone(),
+                input_title: h.input_title.clone(),
+                input_content: truncate_input_content(&h.input_content),
+            })
+            .collect::<Vec<InputContext>>();
         debug!("[Context::new] history: {:?}", context_input_history);
         let clipboard_history = get_clipboard_history();
         debug!("[Context::new] clipboard_history: {:?}", clipboard_history);

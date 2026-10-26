@@ -1,24 +1,26 @@
 //! AI 客户端模块，负责与 AI 服务通信，获取候选词
 
-use std::{thread, time::Duration};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
-use std::process::{Command, Stdio};
-use std::io::{BufReader, BufRead};
+#[cfg(target_os = "windows")]
+use std::io::{BufRead, BufReader};
+#[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::{thread, time::Duration};
 
-use log::{debug, error, info};
+#[cfg(target_os = "windows")]
+use log::error;
+use log::info;
 use serde_json::json;
-use reqwest::Client;
-use serde_json::Value;
-use futures_util::StreamExt;
 
-use crate::context::Context;
 use crate::ai::privacy;
-use crate::db::conn::establish_connection;
-use crate::db::ai_token_usage::increment_used_token;
 use crate::config::{self, ai_client::AiProvider};
+use crate::context::Context;
+use crate::db::ai_token_usage::increment_used_token;
+use crate::db::conn::establish_connection;
 
 struct StreamingDeanonymizer<F>
 where
@@ -75,9 +77,9 @@ where
             if self.buffer.starts_with('[') {
                 let is_prefix = self.mapping.keys().any(|p| p.starts_with(&self.buffer));
                 if !is_prefix {
-                     (&mut self.on_token)(self.buffer.chars().next().unwrap().to_string());
-                     self.buffer = self.buffer[1..].to_string();
-                     continue;
+                    (&mut self.on_token)(self.buffer.chars().next().unwrap().to_string());
+                    self.buffer = self.buffer[1..].to_string();
+                    continue;
                 }
             }
 
@@ -103,7 +105,12 @@ impl AiClient {
         AiClient {}
     }
 
-    pub async fn stream_request_ai<F>(&self, context: Context, on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    pub async fn stream_request_ai<F>(
+        &self,
+        context: Context,
+        on_token: F,
+        cancel_token: Arc<AtomicBool>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         F: FnMut(String) + Send + 'static,
     {
@@ -111,7 +118,8 @@ impl AiClient {
         match config.provider {
             AiProvider::API => {
                 if config.api_key.is_empty() {
-                    self.stream_request_mock(context, on_token, cancel_token).await?;
+                    self.stream_request_mock(context, on_token, cancel_token)
+                        .await?;
                 } else {
                     self.stream_api(context, on_token, cancel_token).await?;
                 }
@@ -124,7 +132,12 @@ impl AiClient {
     }
 
     /// 模拟流式请求，每次回调一个字
-    pub async fn stream_request_mock<F>(&self, context: Context, mut on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    pub async fn stream_request_mock<F>(
+        &self,
+        context: Context,
+        mut on_token: F,
+        cancel_token: Arc<AtomicBool>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         F: FnMut(String) + Send + 'static,
     {
@@ -147,12 +160,17 @@ impl AiClient {
             String::new()
         };
 
-        info!("[AiClient::stream_request_mock] mock response: {}", mock_response);
+        info!(
+            "[AiClient::stream_request_mock] mock response: {}",
+            mock_response
+        );
 
         let chars: Vec<String> = mock_response.chars().map(|c| c.to_string()).collect();
         std::thread::spawn(move || {
             for c in chars {
-                if cancel_token.load(Ordering::SeqCst) { break; }
+                if cancel_token.load(Ordering::SeqCst) {
+                    break;
+                }
                 increment_used_token(&mut conn, &apikey, c.chars().count() as i64);
                 on_token(c.clone());
                 thread::sleep(Duration::from_millis(50));
@@ -183,7 +201,31 @@ impl AiClient {
         prompt
     }
 
-    async fn stream_cmd<F>(&self, context: Context, mut on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    #[cfg(target_os = "macos")]
+    async fn stream_cmd<F>(
+        &self,
+        context: Context,
+        on_token: F,
+        cancel_token: Arc<AtomicBool>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    where
+        F: FnMut(String) + Send + 'static,
+    {
+        let command = config::get_config().unwrap().ai_client.cmd;
+        let prompt = self.prompt_text(context);
+        tokio::task::spawn_blocking(move || {
+            super::unix_cmd::run(command, prompt, on_token, cancel_token)
+        })
+        .await?
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn stream_cmd<F>(
+        &self,
+        context: Context,
+        mut on_token: F,
+        cancel_token: Arc<AtomicBool>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         F: FnMut(String) + Send + 'static,
     {
@@ -227,7 +269,10 @@ impl AiClient {
             command_str.clone()
         };
 
-        info!("[AiClient::stream_cmd] executing: {}, use_stdin: {}", final_cmd, use_stdin);
+        info!(
+            "[AiClient::stream_cmd] executing: {}, use_stdin: {}",
+            final_cmd, use_stdin
+        );
 
         // Use cmd.exe /c on Windows to properly handle .cmd/.bat files and shell operators
         #[cfg(windows)]
@@ -318,7 +363,10 @@ impl AiClient {
                         on_token(line + "\n");
                     }
                     Err(e) => {
-                        error!("[AiClient::stream_cmd] error reading line from stdout: {:?}", e);
+                        error!(
+                            "[AiClient::stream_cmd] error reading line from stdout: {:?}",
+                            e
+                        );
                         break;
                     }
                 }
@@ -330,7 +378,10 @@ impl AiClient {
         let monitor_handle = thread::spawn(move || {
             loop {
                 if cancel_token_monitor.load(Ordering::SeqCst) {
-                    info!("[AiClient::stream_cmd] killing child process {} due to cancellation", child_id);
+                    info!(
+                        "[AiClient::stream_cmd] killing child process {} due to cancellation",
+                        child_id
+                    );
                     #[cfg(windows)]
                     {
                         // On Windows, use taskkill to kill the process tree
@@ -361,7 +412,10 @@ impl AiClient {
         // The monitor will exit naturally after detecting cancellation or when we're done
         drop(monitor_handle); // Let it run to completion or be cleaned up
 
-        info!("[AiClient::stream_cmd] stream finished with status: {:?}", exit_status);
+        info!(
+            "[AiClient::stream_cmd] stream finished with status: {:?}",
+            exit_status
+        );
 
         // If cancelled, don't report errors
         if was_cancelled.load(Ordering::SeqCst) || cancel_token.load(Ordering::SeqCst) {
@@ -383,7 +437,11 @@ impl AiClient {
                 };
 
                 let error_msg = if !stderr_content.is_empty() {
-                    format!("CMD error (exit {}): {}", exit_code, stderr_content.chars().take(200).collect::<String>())
+                    format!(
+                        "CMD error (exit {}): {}",
+                        exit_code,
+                        stderr_content.chars().take(200).collect::<String>()
+                    )
                 } else {
                     format!("CMD error: command exited with code {}", exit_code)
                 };
@@ -403,184 +461,44 @@ impl AiClient {
         Ok(())
     }
 
-    async fn stream_api<F>(&self, context: Context, on_token: F, cancel_token: Arc<AtomicBool>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+    async fn stream_api<F>(
+        &self,
+        context: Context,
+        on_token: F,
+        cancel_token: Arc<AtomicBool>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     where
         F: FnMut(String) + Send + 'static,
     {
-        info!("[AiClient::stream_api] starting AI stream request");
-
-        // Early cancellation check before any processing
         if cancel_token.load(Ordering::SeqCst) {
-            info!("[AiClient::stream_api] cancelled before starting");
             return Ok(());
         }
-
         let config = config::get_config().unwrap().ai_client;
         let prompt = self.prompt_text(context);
-
-        let anonymized_data = privacy::anonymize(&prompt);
-        let anonymized_prompt = anonymized_data.text;
-        info!("[AiClient::stream_api] anonymized_prompt: {:?}", anonymized_prompt);
-        let mapping = anonymized_data.mapping;
-        debug!("[AiClient::stream_api] mapping: {:?}", mapping);
-
-        // Check cancellation before sending request to save tokens
-        if cancel_token.load(Ordering::SeqCst) {
-            info!("[AiClient::stream_api] cancelled before sending request");
-            return Ok(());
-        }
-
-        enum Processor {
-            Passthrough(Box<dyn FnMut(String) + Send>),
-            Deanonymizing(StreamingDeanonymizer<Box<dyn FnMut(String) + Send>>),
-        }
-
-        let apikey = config.api_key.clone();
+        let anonymized = privacy::anonymize(&prompt);
         let prompt_token_count = prompt.chars().count() as i64;
-
-        let client = Client::builder()
-            .no_proxy()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .unwrap();
-
-        let api_url = config.api_url.clone();
-        let request = client
-            .post(&api_url)
-            .bearer_auth(config.api_key.clone())
-            .json(&serde_json::json!({
-                "model": config.api_model,
-                "messages": [
-                    { "role": "user", "content": anonymized_prompt }
-                ],
-                "stream": true
-            }));
-
-        // Use tokio::select! to make the request cancellable
-        let response: reqwest::Response = tokio::select! {
-            res = request.send() => res?,
-            _ = async {
-                loop {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    if cancel_token.load(Ordering::SeqCst) { break; }
-                }
-            } => {
-                info!("[AiClient::stream_api] request cancelled during send");
-                return Ok(());
-            }
-        };
-
-        // Only count prompt tokens after request is successfully sent
+        let apikey = config.api_key.clone();
         let mut conn = establish_connection();
-        increment_used_token(&mut conn, &apikey, prompt_token_count);
-
-        let mut processor = if mapping.is_empty() {
-            let mut f = on_token;
-            Processor::Passthrough(Box::new(move |token: String| {
-                increment_used_token(&mut conn, &apikey, token.chars().count() as i64);
-                f(token)
-            }))
-        } else {
-            let mut f = on_token;
-            Processor::Deanonymizing(StreamingDeanonymizer::new(mapping, Box::new(move |token: String| {
-                increment_used_token(&mut conn, &apikey, token.chars().count() as i64);
-                f(token)
-            })))
-        };
-
-        let status = response.status();
-        info!("[AiClient::stream_api] response status: {}", status);
-
-        // Check HTTP status code
-        if !status.is_success() {
-            let error_body = response.text().await.unwrap_or_else(|_| "unable to read response body".to_string());
-            error!("[AiClient::stream_api] API returned error status {}: {}", status, error_body);
-
-            // Try to parse error JSON
-            let error_msg = if let Ok(val) = serde_json::from_str::<Value>(&error_body) {
-                if let Some(msg) = val["error"]["message"].as_str() {
-                    format!("API error ({}): {}", status.as_u16(), msg)
-                } else if let Some(msg) = val["message"].as_str() {
-                    format!("API error ({}): {}", status.as_u16(), msg)
-                } else {
-                    format!("API error ({}): {}", status.as_u16(), error_body.chars().take(100).collect::<String>())
-                }
-            } else {
-                format!("API error ({}): {}", status.as_u16(), error_body.chars().take(100).collect::<String>())
-            };
-            return Err(error_msg.into());
-        }
-
-        info!("[AiClient::stream_api] request sent, waiting for stream response");
-
-        let mut stream = response.bytes_stream();
-        let mut received_any_data = false;
-
-        while let Some(item) = stream.next().await {
-            if cancel_token.load(Ordering::SeqCst) {
-                info!("[AiClient::stream_api] stream cancelled by token");
-                break;
+        let mut counted_prompt = false;
+        let mut on_token = on_token;
+        let mut processor = StreamingDeanonymizer::new(anonymized.mapping, move |token: String| {
+            if !counted_prompt {
+                increment_used_token(&mut conn, &apikey, prompt_token_count);
+                counted_prompt = true;
             }
-            match item {
-                Ok(chunk) => {
-                    received_any_data = true;
-                    for line in chunk.split(|&b| b == b'\n') {
-                        if line.is_empty() { continue; }
-
-                        // Check for non-SSE error response
-                        if !line.starts_with(b"data: ") && line.starts_with(b"{") {
-                            if let Ok(val) = serde_json::from_slice::<Value>(line) {
-                                if let Some(err_msg) = val["error"]["message"].as_str() {
-                                    error!("[AiClient::stream_api] API error in response: {}", err_msg);
-                                    return Err(format!("API error: {}", err_msg).into());
-                                }
-                            }
-                        }
-
-                        if line.starts_with(b"data: ") {
-                            let json_str = &line[6..];
-                            if json_str == b"[DONE]" { continue; }
-                            if let Ok(val) = serde_json::from_slice::<Value>(json_str) {
-                                // Check for errors in stream
-                                if let Some(err_msg) = val["error"]["message"].as_str() {
-                                    error!("[AiClient::stream_api] API error in stream: {}", err_msg);
-                                    return Err(format!("API stream error: {}", err_msg).into());
-                                }
-                                if let Some(token) = val["choices"][0]["delta"]["content"].as_str() {
-                                    match &mut processor {
-                                        Processor::Passthrough(f) => f(token.to_string()),
-                                        Processor::Deanonymizing(d) => d.process(token),
-                                    }
-                                }
-                            } else {
-                                // JSON parse failed, log it
-                                let line_str = String::from_utf8_lossy(json_str);
-                                if !line_str.trim().is_empty() {
-                                    debug!("[AiClient::stream_api] failed to parse JSON: {}", line_str);
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("[AiClient::stream_api] stream error: {:?}", e);
-                    return Err(Box::new(e));
-                }
-            }
+            increment_used_token(&mut conn, &apikey, token.chars().count() as i64);
+            on_token(token);
+        });
+        super::api_transport::stream(
+            &config,
+            &anonymized.text,
+            |token| processor.process(&token),
+            &cancel_token,
+        )
+        .await?;
+        if !cancel_token.load(Ordering::SeqCst) {
+            processor.flush();
         }
-
-        if !received_any_data {
-            error!("[AiClient::stream_api] no data received from API");
-            return Err("API error: no data received".into());
-        }
-
-        if let Processor::Deanonymizing(mut d) = processor {
-            d.flush();
-        }
-
-        info!("[AiClient::stream_api] stream finished");
         Ok(())
     }
 }
-
-

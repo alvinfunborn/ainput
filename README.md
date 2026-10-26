@@ -6,7 +6,9 @@
 
 ## What is ainput?
 
-ainput is an AI-assisted, system-wide input helper that shows smart, inline completion hints in any text field on Windows. It integrates with multiple LLM providers or local CLI tools, and uses your input history and clipboard as context to improve suggestions.
+ainput is an AI-assisted, system-wide input helper for Windows and macOS. It shows inline completion hints in supported editable text fields, integrates with multiple LLM providers or local CLI tools, and uses input history and clipboard context to improve suggestions.
+
+macOS builds, permissions and compatibility: [macOS guide](docs/macos.md).
 
 ---
 
@@ -33,7 +35,7 @@ Full configuration: `src-tauri/config.toml`
 
 ## How it works
 
-ainput relies on Windows UI Automation (UIA) to detect the focused window and its controls, including editable inputs. The Rust backend (Tauri) gathers context and streams tokens from your configured AI provider to the front-end overlay.
+ainput uses Windows UI Automation (UIA) on Windows and Accessibility (AX) on macOS to detect the focused editable input. The Rust backend (Tauri) gathers context and streams tokens from your configured AI provider to the front-end overlay.
 
 High level flow:
 - Use the `windows` crate to call UIA and fetch focused window/control info
@@ -45,11 +47,17 @@ High level flow:
 
 ## Installation
 
-### Option A: Download binary
+### Option A: Windows binary
 1. Download the latest `ainput.exe` and `config.toml` from Releases.
 2. Place them in the same folder, edit `config.toml` for your AI provider.
 3. Double-click `ainput.exe` to run. A tray icon should appear.
 4. Modify `config.toml` and restart to apply changes.
+
+### macOS
+
+Build the universal `.app` using the [macOS guide](docs/macos.md). Move it to
+Applications, enable Accessibility, and configure an API provider or local CLI
+from Settings. Configuration is stored in Application Support.
 
 ### Option B: Build from source
 

@@ -1,4 +1,5 @@
 [system]
+completion_enabled = true
 # 是否显示托盘图标
 show_tray_icon = true
 # 是否开机启动
@@ -181,7 +182,7 @@ rules = ["(1[3-9]\\d{9})|(\b\\d{17}[\\dXx]\b)|(\b(?:\\d{1,3}\\.){3}\\d{1,3}\b)|(
 [overlay]
 # 候选框刷新间隔/ms
 refresh_interval = 50
-# AI 返回空结果时，重试的最小间隔/ms（防止无限循环）
+# 兼容旧配置；空结果不再定时重试，输入变化后才请求
 retry_interval = 3000
 # 候选框相对位置/px
 relative_x = 0

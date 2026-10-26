@@ -1,50 +1,14 @@
 use log::{debug, error, info};
-use serde::Serialize;
-use windows::Win32::{ System::Com::*, UI::Accessibility::*};
 use windows::core::Interface;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-    KEYEVENTF_SCANCODE, MapVirtualKeyW, MAPVK_VK_TO_VSC,
-    SendInput, VK_LCONTROL, VK_V, VK_END,
-    VIRTUAL_KEY,
+    MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+    KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_END, VK_LCONTROL, VK_V,
 };
+use windows::Win32::{System::Com::*, UI::Accessibility::*};
 
 use crate::os::{window, WindowElement};
 
-#[derive(Clone, Debug, Serialize)]
-pub struct UIElement {
-    pub id: String,
-    pub text: String,
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
-    pub width: i32,
-    pub height: i32,
-    pub window_id: i64,
-    pub control_type: i32,
-    // element_type: 0-default, 1-window, 2-pane, 3-tab, 4-button, 5-scrollbar
-    pub element_type: usize,
-    pub content: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct FocusedInput {
-    pub window_element: WindowElement,
-    pub input_element: UIElement,
-}
-
-impl Eq for FocusedInput {}
-
-impl PartialEq for FocusedInput {
-    fn eq(&self, other: &Self) -> bool {
-        self.window_element.title == other.window_element.title
-        && self.window_element.id == other.window_element.id
-        && self.window_element.class_name == other.window_element.class_name
-        && self.input_element.text == other.input_element.text
-        && self.input_element.id == other.input_element.id
-        && self.input_element.control_type == other.input_element.control_type
-    }
-}
+pub use super::types::{FocusedInput, UIElement};
 
 /// 获取当前聚焦输入框及其在窗口内的相对位置
 pub fn get_focused_input() -> Option<FocusedInput> {
@@ -52,7 +16,8 @@ pub fn get_focused_input() -> Option<FocusedInput> {
         // 1. 获取前台窗口句柄
         let window_element = window::get_current_window()?;
         // 3. 用 UI Automation 获取当前聚焦控件
-        let automation = CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL).ok()?;
+        let automation =
+            CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL).ok()?;
         let focused = automation.GetFocusedElement().ok()?;
         let automation_id = focused.CurrentAutomationId().ok()?;
         let automation_id = automation_id.to_string();
@@ -68,7 +33,13 @@ pub fn get_focused_input() -> Option<FocusedInput> {
                 }
             }
         }
-        if !super::app_element::is_edit_element_in_app(&window_element.app, &window_element.class_name, &text, control_type.0, &content) {
+        if !super::app_element::is_edit_element_in_app(
+            &window_element.app,
+            &window_element.class_name,
+            &text,
+            control_type.0,
+            &content,
+        ) {
             debug!("[get_focused_input] not edit, current window: {:?}, input_text: {}, control_type: {}, content: {}",
                 window_element, text, control_type.0, content);
             return None;
@@ -90,23 +61,35 @@ pub fn get_focused_input() -> Option<FocusedInput> {
             content,
         };
         debug!("[get_focused_input] found focused input in app: {}, current window: {:?}, current input: {:?}, ", window_element.app, window_element, input_element);
-        Some(FocusedInput { window_element, input_element })
+        Some(FocusedInput {
+            window_element,
+            input_element,
+        })
     }
 }
 
 pub fn fill_input(focused_input: FocusedInput, selected_chars: String) {
-    debug!("[ui_automation::fill_input] selected_chars: {}", selected_chars);
+    debug!(
+        "[ui_automation::fill_input] selected_chars: {}",
+        selected_chars
+    );
     let app = focused_input.window_element.app.clone();
     let ui_cfg = crate::config::get_config().unwrap().ui_automation;
     let is_self_draw = ui_cfg.self_draw_apps.contains(&app);
     if is_self_draw {
-        debug!("[ui_automation::fill_input] app {} is in self_draw_apps, use clipboard paste", app);
+        debug!(
+            "[ui_automation::fill_input] app {} is in self_draw_apps, use clipboard paste",
+            app
+        );
         // 复制并粘贴选中的候选字符（不尝试读取/设置原有内容，直接在光标处粘贴）
         let text_to_paste = selected_chars;
         let original_clipboard = crate::os::clipboard::windows_clipboard::get_clipboard_text();
         let set_ok = crate::os::clipboard::windows_clipboard::set_clipboard_text(&text_to_paste);
         if !set_ok {
-            error!("[ui_automation::fill_input] failed to set clipboard text for paste in app {}", app);
+            error!(
+                "[ui_automation::fill_input] failed to set clipboard text for paste in app {}",
+                app
+            );
             return;
         }
 
@@ -116,22 +99,69 @@ pub fn fill_input(focused_input: FocusedInput, selected_chars: String) {
             let sc_v = MapVirtualKeyW(VK_V.0 as u32, MAPVK_VK_TO_VSC) as u16;
 
             let mut seq: [INPUT; 4] = [
-                INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT::default() } },
-                INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT::default() } },
-                INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT::default() } },
-                INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT::default() } },
+                INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT::default(),
+                    },
+                },
+                INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT::default(),
+                    },
+                },
+                INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT::default(),
+                    },
+                },
+                INPUT {
+                    r#type: INPUT_KEYBOARD,
+                    Anonymous: INPUT_0 {
+                        ki: KEYBDINPUT::default(),
+                    },
+                },
             ];
             // Ctrl down (scancode)
-            seq[0].Anonymous.ki = KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: sc_ctrl, dwFlags: KEYEVENTF_SCANCODE, time: 0, dwExtraInfo: 0 };
+            seq[0].Anonymous.ki = KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: sc_ctrl,
+                dwFlags: KEYEVENTF_SCANCODE,
+                time: 0,
+                dwExtraInfo: 0,
+            };
             // V down (scancode)
-            seq[1].Anonymous.ki = KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: sc_v, dwFlags: KEYEVENTF_SCANCODE, time: 0, dwExtraInfo: 0 };
+            seq[1].Anonymous.ki = KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: sc_v,
+                dwFlags: KEYEVENTF_SCANCODE,
+                time: 0,
+                dwExtraInfo: 0,
+            };
             // V up (scancode)
-            seq[2].Anonymous.ki = KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: sc_v, dwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 };
+            seq[2].Anonymous.ki = KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: sc_v,
+                dwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            };
             // Ctrl up (scancode)
-            seq[3].Anonymous.ki = KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: sc_ctrl, dwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 };
+            seq[3].Anonymous.ki = KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: sc_ctrl,
+                dwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            };
 
             let sent = SendInput(&seq, std::mem::size_of::<INPUT>() as i32);
-            debug!("[ui_automation::fill_input] SendInput Ctrl+V (scancode) sent events: {}", sent);
+            debug!(
+                "[ui_automation::fill_input] SendInput Ctrl+V (scancode) sent events: {}",
+                sent
+            );
         }
 
         // 等待系统处理粘贴
@@ -145,7 +175,8 @@ pub fn fill_input(focused_input: FocusedInput, selected_chars: String) {
         let new_content = current_content + &selected_chars;
         debug!("[ui_automation::fill_input] new_content: {}", new_content);
         unsafe {
-            let automation = CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL).ok();
+            let automation =
+                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_ALL).ok();
             if let Some(automation) = automation {
                 if let Ok(element) = automation.GetFocusedElement() {
                     if let Ok(pattern_obj) = element.GetCurrentPattern(UIA_ValuePatternId) {
@@ -175,13 +206,35 @@ fn send_end_key() {
     unsafe {
         let sc_end = MapVirtualKeyW(VK_END.0 as u32, MAPVK_VK_TO_VSC) as u16;
         let mut seq: [INPUT; 2] = [
-            INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT::default() } },
-            INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT::default() } },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT::default(),
+                },
+            },
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT::default(),
+                },
+            },
         ];
         // End down
-        seq[0].Anonymous.ki = KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: sc_end, dwFlags: KEYEVENTF_SCANCODE, time: 0, dwExtraInfo: 0 };
+        seq[0].Anonymous.ki = KEYBDINPUT {
+            wVk: VIRTUAL_KEY(0),
+            wScan: sc_end,
+            dwFlags: KEYEVENTF_SCANCODE,
+            time: 0,
+            dwExtraInfo: 0,
+        };
         // End up
-        seq[1].Anonymous.ki = KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: sc_end, dwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0 };
+        seq[1].Anonymous.ki = KEYBDINPUT {
+            wVk: VIRTUAL_KEY(0),
+            wScan: sc_end,
+            dwFlags: KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
+            time: 0,
+            dwExtraInfo: 0,
+        };
         let sent = SendInput(&seq, std::mem::size_of::<INPUT>() as i32);
         debug!("[send_end_key] sent End key events: {}", sent);
     }
